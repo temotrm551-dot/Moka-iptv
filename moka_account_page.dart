@@ -5,7 +5,12 @@ import 'package:http/http.dart' as http;
 import 'main.dart' hide main;
 
 class MokaAccountPage extends StatefulWidget {
-  const MokaAccountPage({super.key});
+  final VoidCallback onLogout;
+
+  const MokaAccountPage({
+    super.key,
+    required this.onLogout,
+  });
 
   @override
   State<MokaAccountPage> createState() => _MokaAccountPageState();
@@ -13,9 +18,9 @@ class MokaAccountPage extends StatefulWidget {
 
 class _MokaAccountPageState extends State<MokaAccountPage> {
   Source? source;
-  Map<String, dynamic> info = {};
+  Map<String, dynamic>? info;
   bool loading = true;
-  String error = '';
+  String? error;
 
   @override
   void initState() {
@@ -24,67 +29,71 @@ class _MokaAccountPageState extends State<MokaAccountPage> {
   }
 
   Future<void> loadAccount() async {
-    setState(() {
-      loading = true;
-      error = '';
-    });
-
     try {
       final sources = await Store.sources();
-      final active = await Store.active();
+      final index = await Store.active();
 
-      if (sources.isEmpty || active >= sources.length) {
-        throw Exception('لا يوجد حساب مسجل');
+      if (sources.isEmpty || index < 0 || index >= sources.length) {
+        if (mounted) {
+          setState(() {
+            loading = false;
+            error = 'لا يوجد اشتراك مسجل';
+          });
+        }
+        return;
       }
 
-      source = sources[active];
+      source = sources[index];
 
-      var base = source!.url.trim();
-      if (!base.startsWith('http')) base = 'http://$base';
-      if (!base.endsWith('/')) base += '/';
+      if (source!.user.isEmpty || source!.pass.isEmpty) {
+        throw Exception('بيانات الاشتراك غير مكتملة');
+      }
 
-      final uri = Uri.parse(
-        '${base}player_api.php',
-      ).replace(queryParameters: {
-        'username': source!.user,
-        'password': source!.pass,
-      });
-
-      final response = await http.get(uri).timeout(
-        const Duration(seconds: 15),
+      final uri = Uri.parse(source!.url.trim());
+      final apiUri = uri.replace(
+        path: '/player_api.php',
+        queryParameters: {
+          'username': source!.user,
+          'password': source!.pass,
+        },
       );
 
-      final data = jsonDecode(response.body);
-      if (data is! Map || data['user_info'] == null) {
-        throw Exception('بيانات الاشتراك غير متاحة');
+      final response = await http
+          .get(apiUri)
+          .timeout(const Duration(seconds: 15));
+
+      if (response.statusCode != 200) {
+        throw Exception('تعذر الاتصال بالسيرفر');
       }
 
-      if (!mounted) return;
-      setState(() {
-        info = Map<String, dynamic>.from(data['user_info']);
-        loading = false;
-      });
+      final data = jsonDecode(response.body);
+
+      if (data is! Map || data['user_info'] is! Map) {
+        throw Exception('بيانات الاشتراك غير صالحة');
+      }
+
+      if (mounted) {
+        setState(() {
+          info = Map<String, dynamic>.from(data['user_info']);
+          loading = false;
+        });
+      }
     } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        error = e.toString().replaceFirst('Exception: ', '');
-        loading = false;
-      });
+      if (mounted) {
+        setState(() {
+          error = e.toString().replaceFirst('Exception: ', '');
+          loading = false;
+        });
+      }
     }
   }
 
-  String value(String key) {
-    final v = info[key];
-    if (v == null || v.toString().isEmpty) return 'غير متاح';
-    return v.toString();
-  }
+  String expiryDate() {
+    final value = info?['exp_date']?.toString() ?? '';
+    if (value.isEmpty || value == '0') return 'غير محدد';
 
-  String expiry() {
-    final raw = info['exp_date']?.toString() ?? '';
-    if (raw.isEmpty || raw == '0') return 'غير محدد';
-
-    final timestamp = int.tryParse(raw);
-    if (timestamp == null) return raw;
+    final timestamp = int.tryParse(value);
+    if (timestamp == null) return 'غير محدد';
 
     final date = DateTime.fromMillisecondsSinceEpoch(
       timestamp * 1000,
@@ -97,26 +106,16 @@ class _MokaAccountPageState extends State<MokaAccountPage> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xff20202b),
-        title: const Text(
-          'تسجيل الخروج',
-          style: TextStyle(color: Colors.white),
-        ),
-        content: const Text(
-          'هل تريد حذف الحساب الحالي من التطبيق؟',
-          style: TextStyle(color: Colors.white70),
-        ),
+        title: const Text('تسجيل الخروج'),
+        content: const Text('هل تريد حذف الاشتراك الحالي من التطبيق؟'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
             child: const Text('إلغاء'),
           ),
-          TextButton(
+          FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text(
-              'خروج',
-              style: TextStyle(color: Colors.redAccent),
-            ),
+            child: const Text('خروج'),
           ),
         ],
       ),
@@ -125,149 +124,141 @@ class _MokaAccountPageState extends State<MokaAccountPage> {
     if (confirm != true) return;
 
     final sources = await Store.sources();
-    final active = await Store.active();
+    final index = await Store.active();
 
-    if (active < sources.length) {
-      sources.removeAt(active);
+    if (index >= 0 && index < sources.length) {
+      sources.removeAt(index);
     }
 
     await Store.saveSources(sources);
     await Store.saveActive(0);
 
     if (!mounted) return;
-
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const HomePage()),
-      (route) => false,
-    );
+    widget.onLogout();
   }
 
-  Widget item(String title, String data, IconData icon) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(15),
-      decoration: BoxDecoration(
-        color: const Color(0xff20202b),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, color: Colors.deepPurpleAccent),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title,
-                    style: const TextStyle(color: Colors.white60)),
-                const SizedBox(height: 5),
-                Text(
-                  data,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+  Widget detail(String title, String value, IconData icon) {
+    return Card(
+      child: ListTile(
+        leading: Icon(icon, color: const Color(0xFFC8742B)),
+        title: Text(title),
+        subtitle: Text(
+          value.isEmpty ? 'غير متاح' : value,
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    const orange = Color(0xFFC8742B);
+
     return Scaffold(
-      backgroundColor: const Color(0xff11111a),
       appBar: AppBar(
-        backgroundColor: const Color(0xff191923),
-        title: const Text('حسابي وإعدادات MOKA'),
-        actions: [
-          IconButton(
-            onPressed: loadAccount,
-            icon: const Icon(Icons.refresh),
-          ),
-        ],
+        title: const Text('حسابي'),
+        centerTitle: true,
       ),
       body: loading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
-              padding: const EdgeInsets.all(18),
+              padding: const EdgeInsets.all(16),
               children: [
-                const Icon(
-                  Icons.account_circle,
-                  size: 75,
-                  color: Colors.deepPurpleAccent,
+                const CircleAvatar(
+                  radius: 38,
+                  backgroundColor: orange,
+                  child: Icon(Icons.person, size: 42, color: Colors.white),
                 ),
                 const SizedBox(height: 12),
                 Center(
                   child: Text(
-                    source?.name ?? 'حسابي',
+                    source?.name ?? 'MOKA IPTV',
                     style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 22,
+                      fontSize: 21,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                 ),
-                const SizedBox(height: 25),
-                if (error.isNotEmpty)
-                  Text(
-                    error,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.redAccent),
-                  ),
-                item('اسم المستخدم', source?.user ?? '-', Icons.person),
-                item('حالة الاشتراك', value('status'), Icons.verified_user),
-                item('تاريخ انتهاء الاشتراك', expiry(), Icons.event),
-                item('الاتصالات الحالية', value('active_cons'), Icons.devices),
-                item('الحد الأقصى للأجهزة', value('max_connections'), Icons.tv),
-                item('نوع الحساب', value('is_trial') == '1' ? 'تجريبي' : 'عادي', Icons.card_membership),
-                const SizedBox(height: 15),
-                const Text(
-                  'الإعدادات',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 19,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                ListTile(
-                  tileColor: const Color(0xff20202b),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  leading: const Icon(Icons.settings, color: Colors.white),
-                  title: const Text(
-                    'إعدادات التطبيق',
-                    style: TextStyle(color: Colors.white),
-                  ),
-                  subtitle: const Text(
-                    'إعدادات الحساب والتطبيق',
-                    style: TextStyle(color: Colors.white54),
-                  ),
-                  onTap: () {
-                    showAboutDialog(
-                      context: context,
-                      applicationName: 'MOKA IPTV',
-                      applicationVersion: '1.0.0',
-                      applicationLegalese: 'MOKA IPTV',
-                    );
-                  },
-                ),
                 const SizedBox(height: 22),
-                SizedBox(
-                  height: 52,
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.redAccent,
-                      foregroundColor: Colors.white,
+
+                if (error != null) ...[
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Text(
+                        error!,
+                        textAlign: TextAlign.center,
+                      ),
                     ),
-                    onPressed: logout,
-                    icon: const Icon(Icons.logout),
-                    label: const Text('تسجيل الخروج'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        loading = true;
+                        error = null;
+                      });
+                      loadAccount();
+                    },
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('إعادة المحاولة'),
+                  ),
+                ] else ...[
+                  detail(
+                    'اسم المستخدم',
+                    info?['username']?.toString() ?? source?.user ?? '',
+                    Icons.person_outline,
+                  ),
+                  detail(
+                    'حالة الاشتراك',
+                    info?['status']?.toString() ?? 'غير معروف',
+                    Icons.verified_user_outlined,
+                  ),
+                  detail(
+                    'تاريخ الانتهاء',
+                    expiryDate(),
+                    Icons.calendar_month,
+                  ),
+                  detail(
+                    'الأجهزة المتصلة',
+                    '${info?['active_cons'] ?? 0} / ${info?['max_connections'] ?? 0}',
+                    Icons.devices,
+                  ),
+                  detail(
+                    'نوع الاشتراك',
+                    info?['is_trial']?.toString() == '1'
+                        ? 'تجريبي'
+                        : 'اشتراك عادي',
+                    Icons.card_membership,
+                  ),
+                ],
+
+                const SizedBox(height: 18),
+                Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.settings, color: orange),
+                    title: const Text('الإعدادات'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => SettingsPage(),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                Card(
+                  child: ListTile(
+                    leading: const Icon(
+                      Icons.logout,
+                      color: Colors.red,
+                    ),
+                    title: const Text(
+                      'تسجيل الخروج',
+                      style: TextStyle(color: Colors.red),
+                    ),
+                    onTap: logout,
                   ),
                 ),
               ],
