@@ -642,4 +642,144 @@ class _VodPlayerPageState extends State<VodPlayerPage> {
     } else if (down &&
         (k == LogicalKeyboardKey.select ||
             k == LogicalKeyboardKey.enter ||
-            k == LogicalKeyboardKey.n
+            k == LogicalKeyboardKey.
+mediaTrackNext)) {
+      _go(1);
+    } else if (down &&
+        (k == LogicalKeyboardKey.channelDown ||
+            k == LogicalKeyboardKey.mediaTrackPrevious)) {
+      _go(-1);
+    } else if (k == LogicalKeyboardKey.arrowUp ||
+        k == LogicalKeyboardKey.arrowDown) {
+      _showOverlay();
+    } else {
+      return KeyEventResult.ignored;
+    }
+    return KeyEventResult.handled;
+  }
+
+  String _fmt(Duration d) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    final h = d.inHours;
+    return h > 0
+        ? '$h:${two(d.inMinutes % 60)}:${two(d.inSeconds % 60)}'
+        : '${two(d.inMinutes)}:${two(d.inSeconds % 60)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = _c;
+    final v = c?.value;
+    final ready = c != null && c.value.isInitialized && _err == null;
+    final loading = _err == null &&
+        (c == null || !c.value.isInitialized || c.value.isBuffering);
+    final dur = v?.duration.inMilliseconds ?? 0;
+    final pos = (v?.position.inMilliseconds ?? 0).clamp(0, dur).toInt();
+    final playing = v?.isPlaying ?? false;
+
+    return Focus(
+      autofocus: true,
+      onKeyEvent: _onKey,
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () =>
+              _overlay ? setState(() => _overlay = false) : _showOverlay(),
+          child: Stack(fit: StackFit.expand, children: [
+            if (ready)
+              Center(
+                child: AspectRatio(
+                  aspectRatio: c!.value.aspectRatio,
+                  child: VideoPlayer(c),
+                ),
+              ),
+            if (loading) const Center(child: CircularProgressIndicator()),
+            if (_err != null)
+              Center(
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Text(_err!, style: const TextStyle(fontSize: 18)),
+                  const SizedBox(height: 12),
+                  FilledButton(onPressed: _open, child: const Text('Retry')),
+                ]),
+              ),
+            if (_overlay) ...[
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: Container(
+                  color: Colors.black54,
+                  padding: const EdgeInsets.fromLTRB(4, 28, 4, 8),
+                  child: Row(children: [
+                    IconButton(
+                        icon: const Icon(Icons.arrow_back),
+                        onPressed: () => Navigator.pop(context)),
+                    Expanded(
+                      child: Text(_e.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 18)),
+                    ),
+                  ]),
+                ),
+              ),
+              Positioned(
+                bottom: 0,
+                left: 0,
+                right: 0,
+                child: Container(
+                  color: Colors.black54,
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Row(children: [
+                      Text(_fmt(Duration(milliseconds: pos))),
+                      Expanded(
+                        child: Slider(
+                          value: pos.toDouble(),
+                          max: dur > 0 ? dur.toDouble() : 1,
+                          onChanged: dur > 0
+                              ? (x) {
+                                  c!.seekTo(Duration(milliseconds: x.toInt()));
+                                  _showOverlay();
+                                }
+                              : null,
+                        ),
+                      ),
+                      Text(_fmt(Duration(milliseconds: dur))),
+                    ]),
+                    Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                      IconButton(
+                          iconSize: 32,
+                          icon: const Icon(Icons.skip_previous),
+                          onPressed: _i > 0 ? () => _go(-1) : null),
+                      IconButton(
+                          iconSize: 32,
+                          icon: const Icon(Icons.replay_10),
+                          onPressed: () => _seek(-10000)),
+                      IconButton(
+                          iconSize: 48,
+                          icon: Icon(
+                              playing ? Icons.pause_circle : Icons.play_circle),
+                          onPressed: _togglePlay),
+                      IconButton(
+                          iconSize: 32,
+                          icon: const Icon(Icons.forward_10),
+                          onPressed: () => _seek(10000)),
+                      IconButton(
+                          iconSize: 32,
+                          icon: const Icon(Icons.skip_next),
+                          onPressed: _i < widget.items.length - 1
+                              ? () => _go(1)
+                              : null),
+                    ]),
+                  ]),
+                ),
+              ),
+            ],
+          ]),
+        ),
+      ),
+    );
+  }
+}
