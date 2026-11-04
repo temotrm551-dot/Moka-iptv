@@ -1,0 +1,34 @@
+name: Build MOKA IPTV APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Create platform folders
+        run: |
+          flutter create --org com.moka --project-name moka_iptv --platforms=android,ios _shell
+          cp -r _shell/android _shell/ios .
+          rm -rf _shell
+      - run: pip install pillow
+      - run: python tools/setup.py
+      - run: flutter pub get
+      - run: dart run flutter_launcher_icons
+      - run: flutter build apk --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MOKA-IPTV-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
