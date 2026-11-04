@@ -27,7 +27,7 @@ jobs:
       - run: python tools/setup.py
       - run: flutter pub get
       - run: dart run flutter_launcher_icons
-      - run: flutter build apk --release
+      - run: flutter build apk --release -t lib/moka_main.dart
       - uses: actions/upload-artifact@v4
         with:
           name: MOKA-IPTV-apk
