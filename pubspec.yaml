@@ -1,1 +1,27 @@
+name: moka_iptv
+description: MOKA IPTV - a simple IPTV player.
+publish_to: 'none'
+version: 1.0.0+1
 
+environment:
+  sdk: ^3.3.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.0
+  video_player: ^2.8.0
+  shared_preferences: ^2.2.0
+  wakelock_plus: ^1.2.0
+
+dev_dependencies:
+  flutter_launcher_icons: ^0.13.1
+
+flutter:
+  uses-material-design: true
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/icon.png
+  remove_alpha_ios: true
