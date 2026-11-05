@@ -9,8 +9,16 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import 'main.dart' hide main;
 import 'moka_account_page.dart';
 
-void main() => runApp(const MokaShellApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
 
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.landscapeLeft,
+    DeviceOrientation.landscapeRight,
+  ]);
+
+  runApp(const MokaShellApp());
+}
 class MokaShellApp extends StatelessWidget {
   const MokaShellApp({super.key});
 
