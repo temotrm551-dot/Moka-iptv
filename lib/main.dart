@@ -1,3 +1,4 @@
+
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -13,9 +14,8 @@ class Channel {
   String get id => url;
 }
 
-/// A saved playlist: either an M3U link or Xtream Codes login.
 class Source {
-  String name, type, url, user, pass; // type: 'm3u' | 'xtream'
+  String name, type, url, user, pass;
   Source({
     required this.name,
     required this.type,
@@ -81,13 +81,14 @@ Future<List<Channel>> loadChannels(Source s) async {
     if (list.isEmpty) throw 'No channels found in this playlist';
     return list;
   }
-  // Xtream Codes
   final base = s.url.replaceAll(RegExp(r'/+$'), '');
   final api = _xtreamApi(s);
-  final cats =
-      await http.get(Uri.parse('$api&action=get_live_categories')).timeout(_timeout);
-  final streams =
-      await http.get(Uri.parse('$api&action=get_live_streams')).timeout(_timeout);
+  final cats = await http
+      .get(Uri.parse('$api&action=get_live_categories'))
+      .timeout(_timeout);
+  final streams = await http
+      .get(Uri.parse('$api&action=get_live_streams'))
+      .timeout(_timeout);
   if (streams.statusCode != 200) throw 'HTTP ${streams.statusCode}';
   final catMap = <String, String>{};
   try {
@@ -109,20 +110,23 @@ Future<List<Channel>> loadChannels(Source s) async {
   ];
 }
 
-/// "Now / Next" program info. Available for Xtream sources only.
 Future<List<EpgItem>> loadEpg(Source s, Channel c) async {
   if (s.type != 'xtream' || c.streamId.isEmpty) return [];
   try {
     final res = await http
-        .get(Uri.parse('${_xtreamApi(s)}&action=get_short_epg&stream_id=${c.streamId}&limit=2'))
+        .get(Uri.parse(
+            '${_xtreamApi(s)}&action=get_short_epg&stream_id=${c.streamId}&limit=2'))
         .timeout(const Duration(seconds: 15));
     final list = (jsonDecode(res.body)['epg_listings'] as List?) ?? [];
     DateTime ts(dynamic v) =>
         DateTime.fromMillisecondsSinceEpoch(int.parse('$v') * 1000);
     return [
       for (final x in list)
-        EpgItem(utf8.decode(base64.decode('${x['title']}'), allowMalformed: true),
-            ts(x['start_timestamp']), ts(x['stop_timestamp']))
+        EpgItem(
+          utf8.decode(base64.decode('${x['title']}'), allowMalformed: true),
+          ts(x['start_timestamp']),
+          ts(x['stop_timestamp']),
+        )
     ];
   } catch (_) {
     return [];
@@ -143,16 +147,20 @@ class Store {
 
   static Future<Set<String>> favs() async =>
       ((await _p).getStringList('favs') ?? []).toSet();
+
   static Future<void> saveFavs(Set<String> f) async =>
       (await _p).setStringList('favs', f.toList());
 
   static Future<int> active() async => (await _p).getInt('active') ?? 0;
+
   static Future<void> saveActive(int i) async => (await _p).setInt('active', i);
 
   static Future<String?> lastId() async => (await _p).getString('last');
+
   static Future<void> saveLast(String id) async => (await _p).setString('last', id);
 
   static Future<String?> pin() async => (await _p).getString('pin');
+
   static Future<void> savePin(String? v) async {
     final p = await _p;
     if (v == null) {
@@ -162,7 +170,9 @@ class Store {
     }
   }
 
-  static Future<bool> adultLock() async => (await _p).getBool('adult_lock') ?? false;
+  static Future<bool> adultLock() async =>
+      (await _p).getBool('adult_lock') ?? false;
+
   static Future<void> saveAdultLock(bool v) async =>
       (await _p).setBool('adult_lock', v);
 }
@@ -182,8 +192,12 @@ Future<String?> askPin(BuildContext context, String title) {
         decoration: const InputDecoration(hintText: '4 digits'),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-        FilledButton(onPressed: () => Navigator.pop(ctx, c.text), child: const Text('OK')),
+        TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel')),
+        FilledButton(
+            onPressed: () => Navigator.pop(ctx, c.text),
+            child: const Text('OK')),
       ],
     ),
   );
@@ -249,7 +263,8 @@ class _SettingsPageState extends State<SettingsPage> {
             ListTile(
               leading: const Icon(Icons.lock_outline),
               title: const Text('Set parental PIN'),
-              subtitle: const Text('Hides adult channels until you remove the lock'),
+              subtitle:
+                  const Text('Hides adult channels until you remove the lock'),
               onTap: _setPin,
             )
           else ...[
@@ -287,7 +302,8 @@ class _SettingsPageState extends State<SettingsPage> {
           const ListTile(
             leading: Icon(Icons.info_outline),
             title: Text('MOKA IPTV'),
-            subtitle: Text('Player only. Add your own playlist; no content is included.'),
+            subtitle:
+                Text('Player only. Add your own playlist; no content is included.'),
           ),
         ]),
       );
@@ -299,6 +315,7 @@ class PlayerPage extends StatefulWidget {
   final Set<String> favs;
   final void Function(Channel) onFav;
   final Source? source;
+
   const PlayerPage({
     super.key,
     required this.channels,
@@ -307,6 +324,7 @@ class PlayerPage extends StatefulWidget {
     required this.onFav,
     this.source,
   });
+
   @override
   State<PlayerPage> createState() => _PlayerPageState();
 }
@@ -400,7 +418,8 @@ class _PlayerPageState extends State<PlayerPage> {
   KeyEventResult _onKey(FocusNode node, KeyEvent e) {
     if (e is! KeyDownEvent) return KeyEventResult.ignored;
     final k = e.logicalKey;
-    if (k == LogicalKeyboardKey.arrowDown || k == LogicalKeyboardKey.channelUp) {
+    if (k == LogicalKeyboardKey.arrowDown ||
+        k == LogicalKeyboardKey.channelUp) {
       _go(1);
     } else if (k == LogicalKeyboardKey.arrowUp ||
         k == LogicalKeyboardKey.channelDown) {
@@ -497,7 +516,8 @@ class _PlayerPageState extends State<PlayerPage> {
                 right: 0,
                 child: Container(
                   color: Colors.black54,
-                  padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                  padding:
+                      const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
                   child: Column(mainAxisSize: MainAxisSize.min, children: [
                     if (_epg.isNotEmpty)
                       Text(
@@ -544,6 +564,7 @@ void main() => runApp(const MokaApp());
 
 class MokaApp extends StatelessWidget {
   const MokaApp({super.key});
+
   @override
   Widget build(BuildContext context) => MaterialApp(
         title: 'MOKA IPTV',
@@ -559,6 +580,7 @@ class MokaApp extends StatelessWidget {
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
+
   @override
   State<HomePage> createState() => _HomePageState();
 }
@@ -589,23 +611,25 @@ class _HomePageState extends State<HomePage> {
     _lastId = await Store.lastId();
     _hideAdult = await Store.adultLock();
     if (_active >= _sources.length) _active = 0;
-    setState(() {});
+    if (mounted) setState(() {});
     if (_sources.isNotEmpty) _load();
   }
 
   Future<void> _load() async {
+    if (_sources.isEmpty) return;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
       final list = await loadChannels(_sources[_active]);
+      if (!mounted) return;
       setState(() {
         _channels = list;
         _group = 'All';
       });
     } catch (e) {
-      setState(() => _error = '$e');
+      if (mounted) setState(() => _error = '$e');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -655,42 +679,54 @@ class _HomePageState extends State<HomePage> {
     final user = TextEditingController();
     final pass = TextEditingController();
     String type = 'm3u';
+
     final s = await showDialog<Source>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setD) => AlertDialog(
+          scrollable: true,
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 12,
+          ),
           title: const Text('Add playlist'),
-          content: SingleChildScrollView(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: 'm3u', label: Text('M3U')),
-                  ButtonSegment(value: 'xtream', label: Text('Xtream')),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(
+              keyboardDismissBehavior:
+                  ScrollViewKeyboardDismissBehavior.onDrag,
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'm3u', label: Text('M3U')),
+                    ButtonSegment(value: 'xtream', label: Text('Xtream')),
+                  ],
+                  selected: {type},
+                  onSelectionChanged: (v) => setD(() => type = v.first),
+                ),
+                TextField(
+                    controller: name,
+                    decoration: const InputDecoration(labelText: 'Name')),
+                TextField(
+                  controller: url,
+                  keyboardType: TextInputType.url,
+                  decoration: InputDecoration(
+                      labelText: type == 'm3u'
+                          ? 'Playlist URL'
+                          : 'Server URL (http://host:port)'),
+                ),
+                if (type == 'xtream') ...[
+                  TextField(
+                      controller: user,
+                      decoration: const InputDecoration(labelText: 'Username')),
+                  TextField(
+                      controller: pass,
+                      obscureText: true,
+                      decoration:
+                          const InputDecoration(labelText: 'Password')),
                 ],
-                selected: {type},
-                onSelectionChanged: (v) => setD(() => type = v.first),
-              ),
-              TextField(
-                  controller: name,
-                  decoration: const InputDecoration(labelText: 'Name')),
-              TextField(
-                controller: url,
-                keyboardType: TextInputType.url,
-                decoration: InputDecoration(
-                    labelText: type == 'm3u'
-                        ? 'Playlist URL'
-                        : 'Server URL (http://host:port)'),
-              ),
-              if (type == 'xtream') ...[
-                TextField(
-                    controller: user,
-                    decoration: const InputDecoration(labelText: 'Username')),
-                TextField(
-                    controller: pass,
-                    obscureText: true,
-                    decoration: const InputDecoration(labelText: 'Password')),
-              ],
-            ]),
+              ]),
+            ),
           ),
           actions: [
             TextButton(
@@ -702,7 +738,9 @@ class _HomePageState extends State<HomePage> {
                 Navigator.pop(
                   ctx,
                   Source(
-                    name: name.text.trim().isEmpty ? 'Playlist' : name.text.trim(),
+                    name: name.text.trim().isEmpty
+                        ? 'Playlist'
+                        : name.text.trim(),
                     type: type,
                     url: url.text.trim(),
                     user: user.text.trim(),
@@ -716,6 +754,7 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
     );
+
     if (s == null) return;
     _sources.add(s);
     _active = _sources.length - 1;
@@ -798,7 +837,8 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       appBar: AppBar(
         title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('MOKA IPTV', style: TextStyle(fontWeight: FontWeight.bold)),
+          const Text('MOKA IPTV',
+              style: TextStyle(fontWeight: FontWeight.bold)),
           if (_sources.isNotEmpty)
             Text(_sources[_active].name,
                 style: Theme.of(context).textTheme.labelSmall),
