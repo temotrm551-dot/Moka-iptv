@@ -560,6 +560,7 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 }
 
+// مهم: سيبنا اتجاه الشاشة تلقائي حسب الجهاز، من غير فرض portrait أو landscape.
 void main() => runApp(const MokaApp());
 
 class MokaApp extends StatelessWidget {
@@ -673,6 +674,7 @@ class _HomePageState extends State<HomePage> {
     if (mounted) setState(() {});
   }
 
+  // نافذة إضافة الاشتراك: حجم أصغر مع الحفاظ على اتجاه الشاشة.
   Future<void> _addSource() async {
     final name = TextEditingController();
     final url = TextEditingController();
@@ -689,107 +691,113 @@ class _HomePageState extends State<HomePage> {
             horizontal: 28,
             vertical: 18,
           ),
-          titlePadding: const EdgeInsets.fromLTRB(16, 12, 16, 2),
+          titlePadding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
           contentPadding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-          actionsPadding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
+          actionsPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
           title: const Text(
             'Add playlist',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
           ),
           content: SizedBox(
             width: 260,
-            child: SingleChildScrollView(
-              keyboardDismissBehavior:
-                  ScrollViewKeyboardDismissBehavior.onDrag,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SegmentedButton<String>(
-                    style: const ButtonStyle(
-                      visualDensity: VisualDensity.compact,
-                      textStyle: WidgetStatePropertyAll(
-                        TextStyle(fontSize: 12),
-                      ),
-                      padding: WidgetStatePropertyAll(
-                        EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      ),
-                    ),
-                    segments: const [
-                      ButtonSegment(value: 'm3u', label: Text('M3U')),
-                      ButtonSegment(value: 'xtream', label: Text('Xtream')),
-                    ],
-                    selected: {type},
-                    onSelectionChanged: (v) => setD(() => type = v.first),
-                  ),
-                  const SizedBox(height: 4),
-                  TextField(
-                    controller: name,
-                    style: const TextStyle(fontSize: 13),
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      contentPadding:
-                          EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-                      labelText: 'Name',
-                      labelStyle: TextStyle(fontSize: 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SegmentedButton<String>(
+                  style: const ButtonStyle(
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    textStyle: WidgetStatePropertyAll(
+                      TextStyle(fontSize: 12),
                     ),
                   ),
-                  const SizedBox(height: 5),
-                  TextField(
-                    controller: url,
-                    keyboardType: TextInputType.url,
-                    style: const TextStyle(fontSize: 13),
-                    decoration: InputDecoration(
-                      isDense: true,
-                      contentPadding:
-                          const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-                      labelText: type == 'm3u'
-                          ? 'Playlist URL'
-                          : 'Server URL (http://host:port)',
-                      labelStyle: const TextStyle(fontSize: 12),
+                  segments: const [
+                    ButtonSegment(
+                      value: 'm3u',
+                      label: Text('M3U'),
                     ),
-                  ),
-                  if (type == 'xtream') ...[
-                    const SizedBox(height: 5),
-                    TextField(
-                      controller: user,
-                      style: const TextStyle(fontSize: 13),
-                      decoration: const InputDecoration(
-                        isDense: true,
-                        contentPadding:
-                            EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-                        labelText: 'Username',
-                        labelStyle: TextStyle(fontSize: 12),
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    TextField(
-                      controller: pass,
-                      obscureText: true,
-                      style: const TextStyle(fontSize: 13),
-                      decoration: const InputDecoration(
-                        isDense: true,
-                        contentPadding:
-                            EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-                        labelText: 'Password',
-                        labelStyle: TextStyle(fontSize: 12),
-                      ),
+                    ButtonSegment(
+                      value: 'xtream',
+                      label: Text('Xtream'),
                     ),
                   ],
+                  selected: {type},
+                  onSelectionChanged: (v) => setD(() => type = v.first),
+                ),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: name,
+                  style: const TextStyle(fontSize: 13),
+                  decoration: const InputDecoration(
+                    labelText: 'Name',
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 9,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: url,
+                  keyboardType: TextInputType.url,
+                  style: const TextStyle(fontSize: 13),
+                  decoration: InputDecoration(
+                    labelText: type == 'm3u'
+                        ? 'Playlist URL'
+                        : 'Server URL (http://host:port)',
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 9,
+                    ),
+                  ),
+                ),
+                if (type == 'xtream') ...[
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: user,
+                    style: const TextStyle(fontSize: 13),
+                    decoration: const InputDecoration(
+                      labelText: 'Username',
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 9,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: pass,
+                    obscureText: true,
+                    style: const TextStyle(fontSize: 13),
+                    decoration: const InputDecoration(
+                      labelText: 'Password',
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 9,
+                      ),
+                    ),
+                  ),
                 ],
-              ),
+              ],
             ),
           ),
           actions: [
             TextButton(
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+              ),
               onPressed: () => Navigator.pop(ctx),
               child: const Text('Cancel', style: TextStyle(fontSize: 12)),
             ),
             FilledButton(
               style: FilledButton.styleFrom(
                 visualDensity: VisualDensity.compact,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                textStyle: const TextStyle(fontSize: 12),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
               ),
               onPressed: () {
                 if (url.text.trim().isEmpty) return;
@@ -806,7 +814,7 @@ class _HomePageState extends State<HomePage> {
                   ),
                 );
               },
-              child: const Text('Add'),
+              child: const Text('Add', style: TextStyle(fontSize: 12)),
             ),
           ],
         ),
