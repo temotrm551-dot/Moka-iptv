@@ -342,6 +342,11 @@ class _VodBrowserState extends State<VodBrowser> {
     final shown =
         _items.where((x) => x.name.toLowerCase().contains(q)).toList();
 
+    final width = MediaQuery.of(context).size.width;
+    final wide = width >= 900;
+    final panelWidth = wide ? 260.0 : (width >= 600 ? 200.0 : 130.0);
+    final posterExtent = wide ? 190.0 : 140.0;
+
     Widget body;
 
     if (!_started || s == null) {
@@ -365,60 +370,73 @@ class _VodBrowserState extends State<VodBrowser> {
         ),
       );
     } else {
-      body = Column(
+      body = Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (_loading) const LinearProgressIndicator(),
-          if (_error != null)
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: Text(
-                _error!,
-                style: const TextStyle(color: Colors.redAccent),
-              ),
-            ),
           SizedBox(
-            height: 48,
+            width: panelWidth,
             child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
+              padding: const EdgeInsets.symmetric(vertical: 8),
               children: [
                 for (final c in [const VodCat('', 'All'), ..._cats])
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: ChoiceChip(
-                      label: Text(c.name),
-                      selected: _cat == c.id,
-                      onSelected: (_) => _pick(c.id),
+                  ListTile(
+                    dense: !wide,
+                    selected: _cat == c.id,
+                    selectedTileColor:
+                        Theme.of(context).colorScheme.secondaryContainer,
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 12),
+                    title: Text(
+                      c.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                     ),
+                    onTap: () => _pick(c.id),
                   ),
               ],
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: TextField(
-              decoration: const InputDecoration(
-                prefixIcon: Icon(Icons.search),
-                hintText: 'Search',
-              ),
-              onChanged: (v) => setState(() => _query = v),
-            ),
-          ),
+          const VerticalDivider(width: 1),
           Expanded(
-            child: shown.isEmpty && !_loading
-                ? const Center(child: Text('Nothing here'))
-                : GridView.builder(
-                    padding: const EdgeInsets.all(12),
-                    gridDelegate:
-                        const SliverGridDelegateWithMaxCrossAxisExtent(
-                      maxCrossAxisExtent: 140,
-                      childAspectRatio: 0.58,
-                      crossAxisSpacing: 10,
-                      mainAxisSpacing: 10,
+            child: Column(
+              children: [
+                if (_loading) const LinearProgressIndicator(),
+                if (_error != null)
+                  Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Text(
+                      _error!,
+                      style: const TextStyle(color: Colors.redAccent),
                     ),
-                    itemCount: shown.length,
-                    itemBuilder: (_, i) => _tile(shown[i]),
                   ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: TextField(
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(Icons.search),
+                      hintText: 'Search',
+                    ),
+                    onChanged: (v) => setState(() => _query = v),
+                  ),
+                ),
+                Expanded(
+                  child: shown.isEmpty && !_loading
+                      ? const Center(child: Text('Nothing here'))
+                      : GridView.builder(
+                          padding: const EdgeInsets.all(12),
+                          gridDelegate:
+                              SliverGridDelegateWithMaxCrossAxisExtent(
+                            maxCrossAxisExtent: posterExtent,
+                            childAspectRatio: 0.58,
+                            crossAxisSpacing: 10,
+                            mainAxisSpacing: 10,
+                          ),
+                          itemCount: shown.length,
+                          itemBuilder: (_, i) => _tile(shown[i]),
+                        ),
+                ),
+              ],
+            ),
           ),
         ],
       );
@@ -810,6 +828,12 @@ class _VodPlayerPageState extends State<VodPlayerPage> {
     } else if (down &&
         (k == LogicalKeyboardKey.select ||
             k == LogicalKeyboardKey.enter ||
+            k == LogicalKeyboardKey.numpadEnter ||
+            k == LogicalKeyboardKey.space ||
+            k == LogicalKeyboardKey.mediaPlayPause)) {
+      _togglePlay();
+    } else if (down &&
+        (k == LogicalKeyboardKey.channelUp ||
             k == LogicalKeyboardKey.mediaTrackNext)) {
       _go(1);
     } else if (down &&
