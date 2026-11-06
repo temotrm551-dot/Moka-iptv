@@ -906,8 +906,11 @@ class _HomePageState extends State<HomePage> {
       List<MediaItem> movies = [];
       List<SeriesItem> series = [];
       if (source.type == 'xtream') {
-        final r = await Future.wait([loadMovies(source), loadSeries(source)]);
-        movies = r[0]; series = r[1];
+        // Start both requests together, while keeping their result types.
+        final movieFuture = loadMovies(source);
+        final seriesFuture = loadSeries(source);
+        movies = await movieFuture;
+        series = await seriesFuture;
       }
       await Store.saveSources([source]);
       await Store.saveActive(0);
