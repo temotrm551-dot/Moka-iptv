@@ -204,7 +204,21 @@ Future<List<SeriesItem>> loadSeries(Source s) async {
   final cats = <String, String>{};
   if (r[0] is List) for (final c in r[0]) { cats['${c['category_id']}'] = '${c['category_name']}'; }
   if (r[1] is! List) throw 'Invalid series response';
-  return [for (final x in r[1])
+  final rawSeries = List<dynamic>.from(r[1]);
+  int seriesKey(dynamic x) {
+    if (x is! Map) return 0;
+    for (final k in ['last_modified', 'added']) {
+      final n = int.tryParse('${x[k] ?? ''}');
+      if (n != null && n > 0) return n > 99999999999 ? n ~/ 1000 : n;
+    }
+    return 0;
+  }
+  int seriesId(dynamic x) => int.tryParse('${x is Map ? x['series_id'] ?? 0 : 0}') ?? 0;
+  rawSeries.sort((a, b) {
+    final d = seriesKey(b).compareTo(seriesKey(a));
+    return d != 0 ? d : seriesId(b).compareTo(seriesId(a));
+  });
+  return [for (final x in rawSeries)
     SeriesItem(id: '${x['series_id']}', name: '${x['name'] ?? 'Series'}',
       category: cats['${x['category_id']}'] ?? 'Other',
       poster: '${x['cover'] ?? ''}', plot: '${x['plot'] ?? ''}')];
@@ -884,69 +898,107 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
 
 // ================= BROWSE LAYOUT (Movies + Series) =================
 
-const _favCat = '★ Favorites';
+class _CatEntry {
+  final String key, label;
+  final int count;
+  const _CatEntry(this.key, this.label, this.count);
+}
 
-class _BrowseLayout extends StatelessWidget {
-  final List<String> categories;
+class _BrowseLayout extends StatefulWidget {
+  final List<_CatEntry> entries;
   final String selected, hint;
-  final int favCount;
   final ValueChanged<String> onSelect, onQuery;
+  final Widget? menu;
   final Widget body;
-  const _BrowseLayout({required this.categories, required this.selected,
-    required this.hint, required this.favCount, required this.onSelect,
-    required this.onQuery, required this.body});
+  const _BrowseLayout({required this.entries, required this.selected,
+    required this.hint, required this.onSelect, required this.onQuery,
+    required this.body, this.menu});
+  @override
+  State<_BrowseLayout> createState() => _BrowseLayoutState();
+}
+
+class _BrowseLayoutState extends State<_BrowseLayout> {
+  static const _brand = Color(0xFFC8742B);
+  bool _searching = false;
+  final _ctl = TextEditingController();
+
+  @override
+  void dispose() { _ctl.dispose(); super.dispose(); }
+
+  String get _title {
+    for (final e in widget.entries) { if (e.key == widget.selected) return e.label; }
+    return '';
+  }
+  void _closeSearch() {
+    _ctl.clear();
+    widget.onQuery('');
+    setState(() => _searching = false);
+  }
 
   @override
   Widget build(BuildContext context) => Row(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       Container(
-        width: 150,
-        decoration: BoxDecoration(border: Border(
+        width: 190,
+        decoration: BoxDecoration(color: Colors.black26, border: Border(
           right: BorderSide(color: Theme.of(context).dividerColor))),
         child: ListView.builder(
-          padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
-          itemCount: categories.length,
+          itemCount: widget.entries.length,
           itemBuilder: (_, i) {
-            final cat = categories[i];
-            final isFav = cat == _favCat;
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: ChoiceChip(
-                visualDensity: VisualDensity.compact,
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                showCheckmark: false,
-                avatar: isFav ? const Icon(Icons.star, size: 16, color: Colors.amber) : null,
-                label: SizedBox(width: double.infinity, child: Text(
-                  isFav ? 'Favorites ($favCount)' : cat,
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12.5))),
-                selected: cat == selected,
-                onSelected: (_) => onSelect(cat)));
+            final e = widget.entries[i];
+            final sel = e.key == widget.selected;
+            return InkWell(
+              onTap: () => widget.onSelect(e.key),
+              child: Container(
+                height: 42,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  color: sel ? _brand : null,
+                  border: const Border(bottom: BorderSide(color: Colors.white10))),
+                child: Row(children: [
+                  Expanded(child: Text(e.label, maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 13,
+                      fontWeight: sel ? FontWeight.bold : FontWeight.normal,
+                      color: sel ? Colors.white : null))),
+                  const SizedBox(width: 6),
+                  Text('${e.count}', style: TextStyle(fontSize: 12,
+                    color: sel ? Colors.white : Colors.white60)),
+                ]),
+              ),
+            );
           }),
       ),
       Expanded(child: Column(children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(10, 4, 10, 0),
-          child: SizedBox(height: 40, child: TextField(
-            style: const TextStyle(fontSize: 14),
-            decoration: InputDecoration(
-              prefixIcon: const Icon(Icons.search, size: 20),
-              hintText: hint, isDense: true,
-              contentPadding: const EdgeInsets.symmetric(vertical: 8)),
-            onChanged: onQuery)),
-        ),
-        Expanded(child: body),
+        SizedBox(height: 44, child: Row(children: [
+          const SizedBox(width: 12),
+          Expanded(child: _searching
+            ? TextField(controller: _ctl, autofocus: true,
+                style: const TextStyle(fontSize: 14),
+                decoration: InputDecoration(hintText: widget.hint,
+                  border: InputBorder.none, isDense: true),
+                onChanged: widget.onQuery)
+            : Center(child: Text(_title, maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)))),
+          IconButton(
+            tooltip: 'Search',
+            onPressed: _searching ? _closeSearch : () => setState(() => _searching = true),
+            icon: Icon(_searching ? Icons.close : Icons.search)),
+          if (widget.menu != null) widget.menu!,
+        ])),
+        Expanded(child: widget.body),
       ])),
     ],
   );
 }
 
 SliverGridDelegate _posterGrid() => const SliverGridDelegateWithMaxCrossAxisExtent(
-  maxCrossAxisExtent: 118, childAspectRatio: .62,
+  maxCrossAxisExtent: 130, childAspectRatio: .66,
   crossAxisSpacing: 8, mainAxisSpacing: 8);
 
-Widget _favStar(bool fav, VoidCallback onTap) => Positioned(top: 1, right: 1,
+Widget _favStar(bool fav, VoidCallback onTap) => Positioned(top: 3, right: 3,
   child: IconButton(
     iconSize: 18, visualDensity: VisualDensity.compact,
     padding: const EdgeInsets.all(3), constraints: const BoxConstraints(),
@@ -954,51 +1006,92 @@ Widget _favStar(bool fav, VoidCallback onTap) => Positioned(top: 1, right: 1,
     onPressed: onTap,
     icon: Icon(fav ? Icons.star : Icons.star_border, color: Colors.amber)));
 
+class _PosterCard extends StatelessWidget {
+  final String name, poster;
+  final IconData fallback;
+  final bool fav;
+  final VoidCallback onTap, onFav;
+  const _PosterCard({required this.name, required this.poster,
+    required this.fav, required this.onTap, required this.onFav,
+    this.fallback = Icons.movie});
+  @override
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(8),
+    child: ClipRRect(borderRadius: BorderRadius.circular(8),
+      child: Stack(fit: StackFit.expand, children: [
+        Poster(poster, fallback: fallback),
+        Positioned(left: 0, right: 0, bottom: 0, child: Container(
+          padding: const EdgeInsets.fromLTRB(4, 18, 4, 5),
+          decoration: const BoxDecoration(gradient: LinearGradient(
+            begin: Alignment.topCenter, end: Alignment.bottomCenter,
+            colors: [Colors.transparent, Colors.black87])),
+          child: Text(name, maxLines: 2, textAlign: TextAlign.center,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)))),
+        _favStar(fav, onFav),
+      ])),
+  );
+}
+
 // ================= MOVIES GRID =================
 
 class MediaGridPage extends StatefulWidget {
   final String title;
   final List<MediaItem> items;
   final Set<String> favorites;
+  final Map<String, int> progress;
+  final Widget? menu;
   final Future<void> Function(MediaItem) onPlay;
   final void Function(MediaItem) onFavorite;
   const MediaGridPage({super.key, required this.title, required this.items,
-    required this.favorites, required this.onPlay, required this.onFavorite});
+    required this.favorites, required this.onPlay, required this.onFavorite,
+    this.progress = const {}, this.menu});
   @override
   State<MediaGridPage> createState() => _MediaGridPageState();
 }
 class _MediaGridPageState extends State<MediaGridPage> {
-  String _category = 'All', _query = '';
+  String _sel = '__all', _query = '';
   bool _isFav(MediaItem x) =>
       widget.favorites.contains('movie_${x.id}') || widget.favorites.contains(x.id);
+  bool _inProgress(MediaItem x) => (widget.progress['movie_${x.id}'] ?? 0) > 0;
+
   @override
   Widget build(BuildContext context) {
-    final cats = <String>{for (final x in widget.items) if (x.category.isNotEmpty) x.category}.toList()..sort();
+    final counts = <String, int>{};
+    for (final x in widget.items) {
+      if (x.category.isNotEmpty) counts[x.category] = (counts[x.category] ?? 0) + 1;
+    }
+    final cats = counts.keys.toList()..sort();
+    Iterable<MediaItem> base;
+    if (_sel == '__all') { base = widget.items; }
+    else if (_sel == '__fav') { base = widget.items.where(_isFav); }
+    else if (_sel == '__continue') { base = widget.items.where(_inProgress); }
+    else if (_sel == '__recent') { base = widget.items.take(30); }
+    else { base = widget.items.where((x) => x.category == _sel); }
     final q = _query.toLowerCase();
-    final list = widget.items.where((x) =>
-      (_category == _favCat ? _isFav(x) : (_category == 'All' || x.category == _category)) &&
-      x.name.toLowerCase().contains(q)).toList();
-    final favCount = widget.items.where(_isFav).length;
+    final list = base.where((x) => x.name.toLowerCase().contains(q)).toList();
     return _BrowseLayout(
-      categories: [_favCat, 'All', ...cats],
-      selected: _category, hint: 'Search movies', favCount: favCount,
-      onSelect: (v) => setState(() => _category = v),
+      entries: [
+        _CatEntry('__all', 'ALL', widget.items.length),
+        _CatEntry('__fav', 'FAVOURITES', widget.items.where(_isFav).length),
+        _CatEntry('__continue', 'CONTINUE WATCHING', widget.items.where(_inProgress).length),
+        _CatEntry('__recent', 'RECENTLY ADDED', math.min(30, widget.items.length)),
+        for (final c in cats) _CatEntry(c, c, counts[c] ?? 0),
+      ],
+      selected: _sel, hint: 'Search movies', menu: widget.menu,
+      onSelect: (v) => setState(() => _sel = v),
       onQuery: (v) => setState(() => _query = v),
       body: list.isEmpty
-        ? Center(child: Text(_category == _favCat ? 'No favorite movies yet' : 'No movies found'))
+        ? const Center(child: Text('No movies here yet'))
         : GridView.builder(
-            padding: const EdgeInsets.all(8), gridDelegate: _posterGrid(),
+            padding: const EdgeInsets.fromLTRB(8, 2, 8, 8),
+            gridDelegate: _posterGrid(),
             itemCount: list.length, itemBuilder: (_, i) {
               final x = list[i];
-              return InkWell(onTap: () => widget.onPlay(x), child: Column(children: [
-                Expanded(child: Stack(fit: StackFit.expand, children: [
-                  Poster(x.poster),
-                  _favStar(_isFav(x), () { widget.onFavorite(x); setState(() {}); }),
-                ])),
-                const SizedBox(height: 3),
-                Text(x.name, maxLines: 2, textAlign: TextAlign.center,
-                  overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11)),
-              ]));
+              return _PosterCard(name: x.name, poster: x.poster, fav: _isFav(x),
+                onTap: () => widget.onPlay(x),
+                onFav: () { widget.onFavorite(x); setState(() {}); });
             }),
     );
   }
@@ -1010,47 +1103,54 @@ class SeriesBrowserPage extends StatefulWidget {
   final List<SeriesItem> items;
   final Source source;
   final Set<String> favorites;
+  final Widget? menu;
   final void Function(String) onFavorite;
   const SeriesBrowserPage({super.key, required this.items, required this.source,
-    required this.favorites, required this.onFavorite});
+    required this.favorites, required this.onFavorite, this.menu});
   @override
   State<SeriesBrowserPage> createState() => _SeriesBrowserPageState();
 }
 class _SeriesBrowserPageState extends State<SeriesBrowserPage> {
-  String _category = 'All', _query = '';
+  String _sel = '__all', _query = '';
   bool _isFav(SeriesItem x) => widget.favorites.contains('series_${x.id}');
+
   @override
   Widget build(BuildContext context) {
-    final cats = <String>{for (final x in widget.items) if (x.category.isNotEmpty) x.category}.toList()..sort();
+    final counts = <String, int>{};
+    for (final x in widget.items) {
+      if (x.category.isNotEmpty) counts[x.category] = (counts[x.category] ?? 0) + 1;
+    }
+    final cats = counts.keys.toList()..sort();
+    Iterable<SeriesItem> base;
+    if (_sel == '__all') { base = widget.items; }
+    else if (_sel == '__fav') { base = widget.items.where(_isFav); }
+    else if (_sel == '__recent') { base = widget.items.take(30); }
+    else { base = widget.items.where((x) => x.category == _sel); }
     final q = _query.toLowerCase();
-    final list = widget.items.where((x) =>
-      (_category == _favCat ? _isFav(x) : (_category == 'All' || x.category == _category)) &&
-      x.name.toLowerCase().contains(q)).toList();
-    final favCount = widget.items.where(_isFav).length;
+    final list = base.where((x) => x.name.toLowerCase().contains(q)).toList();
     return _BrowseLayout(
-      categories: [_favCat, 'All', ...cats],
-      selected: _category, hint: 'Search series', favCount: favCount,
-      onSelect: (v) => setState(() => _category = v),
+      entries: [
+        _CatEntry('__all', 'ALL', widget.items.length),
+        _CatEntry('__fav', 'FAVOURITES', widget.items.where(_isFav).length),
+        _CatEntry('__recent', 'RECENTLY ADDED', math.min(30, widget.items.length)),
+        for (final c in cats) _CatEntry(c, c, counts[c] ?? 0),
+      ],
+      selected: _sel, hint: 'Search series', menu: widget.menu,
+      onSelect: (v) => setState(() => _sel = v),
       onQuery: (v) => setState(() => _query = v),
       body: list.isEmpty
-        ? Center(child: Text(_category == _favCat ? 'No favorite series yet' : 'No series found'))
+        ? const Center(child: Text('No series here yet'))
         : GridView.builder(
-            padding: const EdgeInsets.all(8), gridDelegate: _posterGrid(),
+            padding: const EdgeInsets.fromLTRB(8, 2, 8, 8),
+            gridDelegate: _posterGrid(),
             itemCount: list.length, itemBuilder: (_, i) {
               final item = list[i];
-              return InkWell(
+              return _PosterCard(name: item.name, poster: item.poster,
+                fallback: Icons.tv, fav: _isFav(item),
                 onTap: () => Navigator.push(context, MaterialPageRoute(
                   builder: (_) => SeriesDetailsPage(series: item, source: widget.source,
                     favorites: widget.favorites, onFavorite: widget.onFavorite))),
-                child: Column(children: [
-                  Expanded(child: Stack(fit: StackFit.expand, children: [
-                    Poster(item.poster, fallback: Icons.tv),
-                    _favStar(_isFav(item), () { widget.onFavorite(item.id); setState(() {}); }),
-                  ])),
-                  const SizedBox(height: 3),
-                  Text(item.name, maxLines: 2, textAlign: TextAlign.center,
-                    overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11)),
-                ]));
+                onFav: () { widget.onFavorite(item.id); setState(() {}); });
             }),
     );
   }
@@ -1357,6 +1457,21 @@ class _HomePageState extends State<HomePage> {
     ]);
   }
 
+  Widget _menuButton() => PopupMenuButton<String>(
+    icon: const Icon(Icons.more_vert),
+    onSelected: (v) {
+      if (v == 'account') { _openAccount(); }
+      else if (v == 'settings') { _openSettings(); }
+      else if (v == 'refresh') { if (!_loading && _source != null) _connect(_source!); }
+      else if (v == 'logout') { _logout(); }
+    },
+    itemBuilder: (_) => const [
+      PopupMenuItem(value: 'refresh', child: Text('Refresh')),
+      PopupMenuItem(value: 'account', child: Text('Account')),
+      PopupMenuItem(value: 'settings', child: Text('Settings')),
+      PopupMenuItem(value: 'logout', child: Text('Logout')),
+    ]);
+
   @override
   Widget build(BuildContext context) {
     if (!_ready) return const Scaffold(body: Center(child: CircularProgressIndicator()));
@@ -1365,22 +1480,24 @@ class _HomePageState extends State<HomePage> {
       _homeBody(),
       _liveBody(),
       MediaGridPage(title: 'Movies', items: _movies, favorites: _mediaFavs,
+        progress: _progress, menu: _menuButton(),
         onFavorite: _toggleMovieFav, onPlay: _playMovie),
-      SeriesBrowserPage(items: _series, source: _source!, favorites: _mediaFavs, onFavorite: _toggleSeriesFav),
+      SeriesBrowserPage(items: _series, source: _source!, favorites: _mediaFavs,
+        menu: _menuButton(), onFavorite: _toggleSeriesFav),
     ];
     return Scaffold(
-      appBar: AppBar(toolbarHeight: 46, title: const Text('MOKA IPTV', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 19)),
+      appBar: _tab >= 2 ? null : AppBar(toolbarHeight: 46, title: const Text('MOKA IPTV', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 19)),
         actions: [
           IconButton(tooltip: 'Account details', onPressed: _openAccount, icon: const Icon(Icons.account_circle)),
           IconButton(tooltip: 'Settings', onPressed: _openSettings, icon: const Icon(Icons.settings)),
           IconButton(tooltip: 'Logout', onPressed: _logout, icon: const Icon(Icons.logout)),
           IconButton(tooltip: 'Refresh', onPressed: _loading ? null : () => _connect(_source!), icon: const Icon(Icons.refresh)),
         ]),
-      body: Column(children: [
+      body: SafeArea(bottom: false, child: Column(children: [
         if (_loading) const LinearProgressIndicator(),
         if (_error != null) Padding(padding: const EdgeInsets.all(8), child: Text(_error!, style: const TextStyle(color: Colors.redAccent))),
         Expanded(child: IndexedStack(index: _tab, children: pages)),
-      ]),
+      ])),
       bottomNavigationBar: NavigationBar(height: 54, selectedIndex: _tab,
         onDestinationSelected: (index) => setState(() => _tab = index),
         destinations: const [
