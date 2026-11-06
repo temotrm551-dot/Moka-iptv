@@ -167,8 +167,17 @@ Future<List<MediaItem>> loadMovies(Source s) async {
   // if the provider omits it, use the numeric stream ID as a stable fallback.
   final rawMovies = List<dynamic>.from(r[1]);
   int addedValue(dynamic x) {
-    final raw = x is Map ? (x['added'] ?? x['last_modified'] ?? x['stream_id']) : null;
-    return int.tryParse('$raw') ?? 0;
+    if (x is! Map) return 0;
+    // Providers may send Unix seconds, milliseconds, or a date string.
+    for (final key in ['added', 'last_modified']) {
+      final raw = x[key];
+      if (raw == null || '$raw'.trim().isEmpty) continue;
+      final numeric = int.tryParse('$raw');
+      if (numeric != null) return numeric;
+      final parsed = DateTime.tryParse('$raw');
+      if (parsed != null) return parsed.millisecondsSinceEpoch ~/ 1000;
+    }
+    return int.tryParse('${x['stream_id'] ?? 0}') ?? 0;
   }
   rawMovies.sort((a, b) => addedValue(b).compareTo(addedValue(a)));
   return [for (final x in rawMovies)
@@ -617,6 +626,8 @@ class MediaPlayerPage extends StatefulWidget {
 class _MediaPlayerPageState extends State<MediaPlayerPage> {
   VideoPlayerController? _c;
   Timer? _timer;
+  Timer? _controlsTimer;
+  bool _controlsVisible = true;
   bool _loading = true;
   String? _error;
 
@@ -643,12 +654,28 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
         await c.seekTo(Duration(milliseconds: saved));
       }
       await c.play();
+      _scheduleControlsHide();
       c.addListener(_changed);
       _timer = Timer.periodic(const Duration(seconds: 5), (_) => _save());
       if (mounted) setState(() => _loading = false);
     } catch (_) {
       if (mounted) setState(() { _loading = false; _error = 'Unable to play this video'; });
     }
+  }
+
+  void _scheduleControlsHide() {
+    _controlsTimer?.cancel();
+    _controlsTimer = Timer(const Duration(seconds: 4), () {
+      if (!mounted) return;
+      final c = _c;
+      if (c != null && c.value.isPlaying) setState(() => _controlsVisible = false);
+    });
+  }
+
+  void _toggleControls() {
+    setState(() => _controlsVisible = !_controlsVisible);
+    if (_controlsVisible) _scheduleControlsHide();
+    else _controlsTimer?.cancel();
   }
 
   void _changed() {
@@ -686,8 +713,11 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
     if (c == null || !c.value.isInitialized) return;
     if (c.value.isPlaying) {
       await c.pause();
+      _controlsTimer?.cancel();
     } else {
       await c.play();
+      _controlsVisible = true;
+      _scheduleControlsHide();
     }
     if (mounted) setState(() {});
   }
@@ -695,6 +725,7 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
   @override
   void dispose() {
     _timer?.cancel();
+    _controlsTimer?.cancel();
     _save();
     _c?.removeListener(_changed);
     _c?.dispose();
@@ -737,8 +768,12 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
                           aspectRatio: ratio,
                           child: VideoPlayer(c),
                         )),
-                        // Persistent top bar, independent from video tap gestures.
-                        Positioned(
+                        Positioned.fill(child: GestureDetector(
+                          behavior: HitTestBehavior.translucent,
+                          onTap: _toggleControls,
+                          child: const SizedBox.expand(),
+                        )),
+                        if (_controlsVisible) Positioned(
                           top: 0, left: 0, right: 0,
                           child: SafeArea(bottom: false, child: Container(
                             color: Colors.black.withOpacity(.72),
@@ -756,7 +791,7 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
                           )),
                         ),
                         // Solid, always-visible playback panel for phones and TVs.
-                        Positioned(
+                        if (_controlsVisible) Positioned(
                           left: 0, right: 0, bottom: 0,
                           child: SafeArea(top: false, child: Container(
                             color: Colors.black.withOpacity(.88),
@@ -974,33 +1009,59 @@ class _SeriesDetailsPageState extends State<SeriesDetailsPage> {
     final seasons = _episodes.map((e) => e.season).toSet().toList()..sort();
     final visible = _season == null ? _episodes : _episodes.where((e) => e.season == _season).toList();
     final fav = widget.favorites.contains('series_${widget.series.id}');
+
+    Widget seasonPicker() => SizedBox(height: 44, child: ListView(
+      scrollDirection: Axis.horizontal,
+      children: [
+        Padding(padding: const EdgeInsets.symmetric(horizontal: 4), child: ChoiceChip(
+          label: const Text('All seasons'), selected: _season == null,
+          onSelected: (_) => setState(() => _season = null))),
+        for (final n in seasons) Padding(padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: ChoiceChip(label: Text('Part / Season $n'), selected: _season == n,
+            onSelected: (_) => setState(() => _season = n))),
+      ],
+    ));
+
+    Widget episodeList() => Expanded(child: _loading
+      ? const Center(child: CircularProgressIndicator())
+      : _error != null ? Center(child: Text(_error!))
+      : visible.isEmpty ? const Center(child: Text('No episodes found'))
+      : ListView.builder(itemCount: visible.length, itemBuilder: (_, i) {
+          final ep = visible[i];
+          return ListTile(dense: true, leading: const Icon(Icons.play_circle_outline),
+            title: Text(ep.name, maxLines: 2, overflow: TextOverflow.ellipsis),
+            subtitle: Text('Part / Season ${ep.season} • Episode ${ep.number}'),
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) =>
+              MediaPlayerPage(name: ep.name, url: ep.url, id: 'episode_${ep.id}'))));
+        }));
+
     return Scaffold(appBar: AppBar(title: Text(widget.series.name), actions: [
       IconButton(onPressed: () { widget.onFavorite(widget.series.id); setState(() {}); },
         icon: Icon(fav ? Icons.star : Icons.star_border), color: Colors.amber),
-    ]), body: Column(children: [
-      if (widget.series.poster.isNotEmpty)
-        SizedBox(height: 135, child: Padding(padding: const EdgeInsets.all(8), child: Poster(widget.series.poster, fallback: Icons.tv))),
-      if (widget.series.plot.isNotEmpty)
-        Padding(padding: const EdgeInsets.all(8), child: Text(widget.series.plot, maxLines: 3, overflow: TextOverflow.ellipsis)),
-      if (!_loading && seasons.isNotEmpty)
-        SizedBox(height: 45, child: ListView(scrollDirection: Axis.horizontal, children: [
-          Padding(padding: const EdgeInsets.symmetric(horizontal: 5), child: ChoiceChip(label: const Text('All seasons'),
-            selected: _season == null, onSelected: (_) => setState(() => _season = null))),
-          for (final n in seasons) Padding(padding: const EdgeInsets.symmetric(horizontal: 5),
-            child: ChoiceChip(label: Text('Season $n'), selected: _season == n, onSelected: (_) => setState(() => _season = n))),
-        ])),
-      Expanded(child: _loading ? const Center(child: CircularProgressIndicator())
-        : _error != null ? Center(child: Text(_error!))
-        : visible.isEmpty ? const Center(child: Text('No episodes found'))
-        : ListView.builder(itemCount: visible.length, itemBuilder: (_, i) {
-          final ep = visible[i];
-          return ListTile(leading: const Icon(Icons.play_circle_outline),
-            title: Text(ep.name), subtitle: Text('Season ${ep.season}'),
-            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) =>
-              MediaPlayerPage(name: ep.name, url: ep.url, id: 'episode_${ep.id}'))));
-        })),
-    ]));
+    ]), body: LayoutBuilder(builder: (context, constraints) {
+      final landscape = constraints.maxWidth > constraints.maxHeight;
+      final details = Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        if (widget.series.poster.isNotEmpty)
+          SizedBox(height: landscape ? 105 : 135, child: Padding(padding: const EdgeInsets.all(6),
+            child: Poster(widget.series.poster, fallback: Icons.tv))),
+        if (widget.series.plot.isNotEmpty)
+          Padding(padding: const EdgeInsets.all(8), child: Text(widget.series.plot,
+            maxLines: landscape ? 2 : 3, overflow: TextOverflow.ellipsis)),
+      ]);
+      if (landscape) {
+        return Row(children: [
+          SizedBox(width: (constraints.maxWidth * .34).clamp(190.0, 330.0), child: details),
+          const VerticalDivider(width: 1),
+          Expanded(child: Column(children: [
+            if (!_loading && seasons.isNotEmpty) seasonPicker(),
+            episodeList(),
+          ])),
+        ]);
+      }
+      return Column(children: [details, if (!_loading && seasons.isNotEmpty) seasonPicker(), episodeList()]);
+    }));
   }
+
 }
 
 // ================= APP & HOME =================
