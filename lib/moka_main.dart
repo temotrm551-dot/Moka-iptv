@@ -332,35 +332,35 @@ class _LoginPageState extends State<LoginPage> {
   @override
   Widget build(BuildContext context) => Scaffold(
     body: Center(child: SingleChildScrollView(
-      child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 430),
-        child: Card(margin: const EdgeInsets.all(22), child: Padding(
-          padding: const EdgeInsets.all(24),
+      child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 650),
+        child: Card(margin: const EdgeInsets.all(10), child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Icon(Icons.live_tv, size: 58, color: Color(0xFFC8742B)),
+            const Icon(Icons.live_tv, size: 34, color: Color(0xFFC8742B)),
+            const SizedBox(height: 2),
+            const Text('MOKA IPTV', style: TextStyle(fontSize: 21, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
-            const Text('MOKA IPTV', style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 18),
             SegmentedButton<String>(
               segments: const [
                 ButtonSegment(value: 'xtream', label: Text('Xtream')),
                 ButtonSegment(value: 'm3u', label: Text('M3U')),
               ],
               selected: {_type}, onSelectionChanged: (v) => setState(() => _type = v.first)),
-            const SizedBox(height: 12),
-            TextField(controller: _name, decoration: const InputDecoration(labelText: 'Playlist name', prefixIcon: Icon(Icons.label))),
-            const SizedBox(height: 10),
+            const SizedBox(height: 6),
+            TextField(controller: _name, decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10), labelText: 'Playlist name', prefixIcon: Icon(Icons.label))),
+            const SizedBox(height: 6),
             TextField(controller: _server, keyboardType: TextInputType.url,
-              decoration: InputDecoration(labelText: _type == 'xtream' ? 'Server URL' : 'M3U playlist URL', prefixIcon: const Icon(Icons.link))),
+              decoration: InputDecoration(isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10), labelText: _type == 'xtream' ? 'Server URL' : 'M3U playlist URL', prefixIcon: const Icon(Icons.link))),
             if (_type == 'xtream') ...[
-              const SizedBox(height: 10),
-              TextField(controller: _user, decoration: const InputDecoration(labelText: 'Username', prefixIcon: Icon(Icons.person))),
-              const SizedBox(height: 10),
+              const SizedBox(height: 6),
+              TextField(controller: _user, decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10), labelText: 'Username', prefixIcon: Icon(Icons.person))),
+              const SizedBox(height: 6),
               TextField(controller: _pass, obscureText: _hidePass,
-                decoration: InputDecoration(labelText: 'Password', prefixIcon: const Icon(Icons.lock),
+                decoration: InputDecoration(isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10), labelText: 'Password', prefixIcon: const Icon(Icons.lock),
                   suffixIcon: IconButton(icon: Icon(_hidePass ? Icons.visibility : Icons.visibility_off),
                     onPressed: () => setState(() => _hidePass = !_hidePass)))),
             ],
-            const SizedBox(height: 20),
+            const SizedBox(height: 9),
             SizedBox(width: double.infinity, child: FilledButton.icon(
               onPressed: _busy ? null : _submit,
               icon: _busy ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.login),
@@ -703,10 +703,10 @@ class _MediaGridPageState extends State<MediaGridPage> {
       (!_onlyFav || widget.favorites.contains('movie_${x.id}') || widget.favorites.contains(x.id)) &&
       (_category == 'All' || x.category == _category) &&
       x.name.toLowerCase().contains(_query.toLowerCase())).toList();
-    return Scaffold(appBar: AppBar(title: Text(widget.title), actions: [
-      IconButton(onPressed: () => setState(() => _onlyFav = !_onlyFav),
-        icon: Icon(_onlyFav ? Icons.star : Icons.star_border), color: Colors.amber),
-    ]), body: Row(children: [
+    return Column(children: [
+      Align(alignment: Alignment.centerRight, child: IconButton(tooltip: 'Favorites only', onPressed: () => setState(() => _onlyFav = !_onlyFav),
+        icon: Icon(_onlyFav ? Icons.star : Icons.star_border), color: Colors.amber)),
+      Expanded(child: Row(children: [
       Container(width: 190, decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface,
         border: Border(right: BorderSide(color: Theme.of(context).dividerColor))),
         child: ListView(padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
@@ -742,7 +742,8 @@ class _MediaGridPageState extends State<MediaGridPage> {
               });
           })),
       ])),
-    ]));
+    ])),
+    ]);
   }
 }
 
@@ -766,10 +767,10 @@ class _SeriesBrowserPageState extends State<SeriesBrowserPage> {
       (!_onlyFav || widget.favorites.contains('series_${x.id}')) &&
       (_category == 'All' || x.category == _category) &&
       x.name.toLowerCase().contains(_query.toLowerCase())).toList();
-    return Scaffold(appBar: AppBar(title: const Text('Series'), actions: [
-      IconButton(onPressed: () => setState(() => _onlyFav = !_onlyFav),
-        icon: Icon(_onlyFav ? Icons.star : Icons.star_border), color: Colors.amber),
-    ]), body: Row(children: [
+    return Column(children: [
+      Align(alignment: Alignment.centerRight, child: IconButton(tooltip: 'Favorites only', onPressed: () => setState(() => _onlyFav = !_onlyFav),
+        icon: Icon(_onlyFav ? Icons.star : Icons.star_border), color: Colors.amber)),
+      Expanded(child: Row(children: [
       Container(width: 190, decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface,
         border: Border(right: BorderSide(color: Theme.of(context).dividerColor))),
         child: ListView(padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
@@ -807,7 +808,8 @@ class _SeriesBrowserPageState extends State<SeriesBrowserPage> {
               });
           })),
       ])),
-    ]));
+    ])),
+    ]);
   }
 }
 
@@ -935,9 +937,8 @@ class _HomePageState extends State<HomePage> {
       List<MediaItem> movies = [];
       List<SeriesItem> series = [];
       if (source.type == 'xtream') {
-        final results = await Future.wait([loadMovies(source), loadSeries(source)]);
-        movies = results[0] as List<MediaItem>;
-        series = results[1] as List<SeriesItem>;
+        movies = await loadMovies(source);
+        series = await loadSeries(source);
       }
       await Store.saveSources([source]);
       await Store.saveActive(0);
@@ -1111,7 +1112,7 @@ class _HomePageState extends State<HomePage> {
         if (_error != null) Padding(padding: const EdgeInsets.all(8), child: Text(_error!, style: const TextStyle(color: Colors.redAccent))),
         Expanded(child: IndexedStack(index: _tab, children: pages)),
       ]),
-      bottomNavigationBar: NavigationBar(selectedIndex: _tab,
+      bottomNavigationBar: NavigationBar(height: 62, selectedIndex: _tab,
         onDestinationSelected: (index) => setState(() => _tab = index),
         destinations: const [
           NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Home'),
