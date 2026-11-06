@@ -61,6 +61,20 @@ class AccountInfo {
     required this.trial});
 }
 
+class ContinueItem {
+  final String id, name, url, poster, type;
+  const ContinueItem({required this.id, required this.name, required this.url,
+    required this.poster, required this.type});
+  Map<String, dynamic> toJson() => {
+    'id': id, 'name': name, 'url': url, 'poster': poster, 'type': type,
+  };
+  factory ContinueItem.fromJson(Map<String, dynamic> j) => ContinueItem(
+    id: '${j['id'] ?? ''}', name: '${j['name'] ?? ''}',
+    url: '${j['url'] ?? ''}', poster: '${j['poster'] ?? ''}',
+    type: '${j['type'] ?? 'movie'}',
+  );
+}
+
 // ================= API HELPERS =================
 
 const _timeout = Duration(seconds: 35);
@@ -328,6 +342,34 @@ class Store {
 
   static Future<void> saveAdultLock(bool v) async =>
       (await p).setBool('adult_lock', v);
+
+  static Future<List<ContinueItem>> continueItems() async {
+    final raw = (await p).getString('continue_items');
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      return [for (final x in jsonDecode(raw)) ContinueItem.fromJson(x)];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<void> saveContinueItem(ContinueItem item) async {
+    final items = await continueItems();
+    items.removeWhere((x) => x.id == item.id);
+    items.insert(0, item);
+    final prefs = await p;
+    await prefs.setString('continue_items',
+      jsonEncode(items.take(30).map((x) => x.toJson()).toList()));
+  }
+
+  static Future<void> removeContinueItem(String id) async {
+    final items = await continueItems();
+    items.removeWhere((x) => x.id == id);
+    final prefs = await p;
+    await prefs.setString('continue_items',
+      jsonEncode(items.map((x) => x.toJson()).toList()));
+    await prefs.remove('progress_$id');
+  }
 
   static Future<void> logout() async {
     final prefs = await p;
@@ -1045,11 +1087,14 @@ class _LivePlayerPageState extends State<LivePlayerPage> {
 
 class MediaPlayerPage extends StatefulWidget {
   final String name, url, id;
+  final String poster, mediaType;
   const MediaPlayerPage({
     super.key,
     required this.name,
     required this.url,
     required this.id,
+    this.poster = '',
+    this.mediaType = 'movie',
   });
 
   @override
@@ -1071,6 +1116,10 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
   }
 
   Future<void> _start() async {
+    await Store.saveContinueItem(ContinueItem(
+      id: widget.id, name: widget.name, url: widget.url,
+      poster: widget.poster, type: widget.mediaType,
+    ));
     final c = VideoPlayerController.networkUrl(Uri.parse(widget.url));
     _c = c;
     try {
@@ -1101,8 +1150,13 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
   Future<void> _save() async {
     final c = _c;
     if (c != null && c.value.isInitialized) {
-      await Store.saveProgress(
-          widget.id, c.value.position.inMilliseconds);
+      final position = c.value.position.inMilliseconds;
+      final duration = c.value.duration.inMilliseconds;
+      if (duration > 0 && position >= duration - 10000) {
+        await Store.removeContinueItem(widget.id);
+      } else {
+        await Store.saveProgress(widget.id, position);
+      }
     }
   }
 
@@ -1730,6 +1784,8 @@ class _SeriesDetailsPageState extends State<SeriesDetailsPage> {
                                       name: ep.name,
                                       url: ep.url,
                                       id: 'episode_${ep.id}',
+                                      poster: widget.series.poster,
+                                      mediaType: 'series',
                                     ),
                                   ),
                                 ),
@@ -1787,6 +1843,7 @@ class _HomePageState extends State<HomePage> {
   List<MediaItem> _movies = [];
   List<SeriesItem> _series = [];
   Set<String> _favs = {}, _mediaFavs = {};
+  List<ContinueItem> _continue = [];
 
   String _group = 'All', _query = '';
   String? _lastId;
@@ -1806,6 +1863,7 @@ class _HomePageState extends State<HomePage> {
     _mediaFavs = await Store.mediaFavs();
     _hideAdult = await Store.adultLock();
     _lastId = await Store.lastId();
+    _continue = await Store.continueItems();
 
     final saved = await Store.sources();
     if (saved.isNotEmpty) {
@@ -1866,6 +1924,11 @@ class _HomePageState extends State<HomePage> {
       }
       if (!restore) rethrow;
     }
+  }
+
+  Future<void> _refreshContinue() async {
+    _continue = await Store.continueItems();
+    if (mounted) setState(() {});
   }
 
   Future<void> _login(Source s) async {
@@ -1933,6 +1996,8 @@ class _HomePageState extends State<HomePage> {
                   name: m.name,
                   url: m.url,
                   id: 'movie_${m.id}',
+                  poster: m.poster,
+                  mediaType: 'movie',
                 ),
               ),
             );
@@ -1941,7 +2006,7 @@ class _HomePageState extends State<HomePage> {
       ),
     );
 
-    if (mounted) setState(() {});
+    await _refreshContinue();
   }
 
   Future<void> _openSeries() async {
@@ -1960,7 +2025,7 @@ class _HomePageState extends State<HomePage> {
       ),
     );
 
-    if (mounted) setState(() {});
+    await _refreshContinue();
   }
 
   Future<void> _openAccount() async {
@@ -2027,30 +2092,21 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     if (!_ready) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-
     if (_source == null) return LoginPage(onLogin: _login);
 
     final visible = _hideAdult
         ? _channels.where((c) => !_isAdult(c)).toList()
         : _channels;
-
     final groups = <String>{
       for (final c in visible)
         if (c.group.isNotEmpty) c.group
-    }.toList()
-      ..sort();
-
+    }.toList()..sort();
     final q = _query.toLowerCase();
-
     final shown = visible.where((c) {
       if (_group == _favKey && !_favs.contains(c.id)) return false;
-      if (_group != 'All' &&
-          _group != _favKey &&
-          c.group != _group) {
+      if (_group != 'All' && _group != _favKey && c.group != _group) {
         return false;
       }
       return c.name.toLowerCase().contains(q);
@@ -2058,31 +2114,18 @@ class _HomePageState extends State<HomePage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'MOKA IPTV',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
+        title: const Text('MOKA IPTV',
+            style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
-          IconButton(
-            tooltip: 'Account details',
-            onPressed: _openAccount,
-            icon: const Icon(Icons.account_circle),
-          ),
-          IconButton(
-            tooltip: 'Settings',
-            onPressed: _openSettings,
-            icon: const Icon(Icons.settings),
-          ),
-          IconButton(
-            tooltip: 'Logout',
-            onPressed: _logout,
-            icon: const Icon(Icons.logout),
-          ),
-          IconButton(
-            tooltip: 'Refresh',
-            onPressed: _loading ? null : () => _connect(_source!),
-            icon: const Icon(Icons.refresh),
-          ),
+          IconButton(tooltip: 'Account details', onPressed: _openAccount,
+              icon: const Icon(Icons.account_circle)),
+          IconButton(tooltip: 'Settings', onPressed: _openSettings,
+              icon: const Icon(Icons.settings)),
+          IconButton(tooltip: 'Logout', onPressed: _logout,
+              icon: const Icon(Icons.logout)),
+          IconButton(tooltip: 'Refresh',
+              onPressed: _loading ? null : () => _connect(_source!),
+              icon: const Icon(Icons.refresh)),
         ],
       ),
       body: Column(
@@ -2091,215 +2134,184 @@ class _HomePageState extends State<HomePage> {
           if (_error != null)
             Padding(
               padding: const EdgeInsets.all(8),
-              child: Text(
-                _error!,
-                style: const TextStyle(color: Colors.redAccent),
-              ),
+              child: Text(_error!,
+                  style: const TextStyle(color: Colors.redAccent)),
             ),
-          Padding(
-            padding: const EdgeInsets.symmetric(
-                horizontal: 10, vertical: 5),
-            child: Row(
-              children: [
-                Expanded(
-                  child: _section(
-                    'Live TV',
-                    Icons.live_tv,
-                    _tab == 0,
-                    () => setState(() => _tab = 0),
-                  ),
-                ),
-                const SizedBox(width: 7),
-                Expanded(
-                  child: _section(
-                    'Movies',
-                    Icons.movie,
-                    _tab == 1,
-                    _openMovies,
-                  ),
-                ),
-                const SizedBox(width: 7),
-                Expanded(
-                  child: _section(
-                    'Series',
-                    Icons.video_library,
-                    _tab == 2,
-                    _openSeries,
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // ===== LIVE TV: التصنيفات شمال والقنوات والبحث يمين =====
-          if (_tab == 0)
-            Expanded(
-              child: Row(
-                children: [
-                  Container(
-                    width: 190,
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surface,
-                      border: Border(
-                        right: BorderSide(
-                          color: Theme.of(context).dividerColor,
+          Expanded(
+            child: _tab == 1
+                ? Row(
+                    children: [
+                      Container(
+                        width: 190,
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.surface,
+                          border: Border(right: BorderSide(
+                              color: Theme.of(context).dividerColor)),
                         ),
-                      ),
-                    ),
-                    child: ListView(
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 10,
-                        horizontal: 8,
-                      ),
-                      children: [
-                        for (final g in ['All', _favKey, ...groups])
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 6),
-                            child: ChoiceChip(
-                              label: SizedBox(
-                                width: double.infinity,
-                                child: Text(
-                                  g,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
+                        child: ListView(
+                          padding: const EdgeInsets.symmetric(
+                              vertical: 10, horizontal: 8),
+                          children: [
+                            for (final g in ['All', _favKey, ...groups])
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 6),
+                                child: ChoiceChip(
+                                  label: SizedBox(width: double.infinity,
+                                    child: Text(g, maxLines: 1,
+                                      overflow: TextOverflow.ellipsis)),
+                                  selected: _group == g,
+                                  onSelected: (_) => setState(() => _group = g),
                                 ),
                               ),
-                              selected: _group == g,
-                              onSelected: (_) =>
-                                  setState(() => _group = g),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  Expanded(
-                    child: Column(
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 5,
-                          ),
-                          child: TextField(
-                            decoration: const InputDecoration(
-                              prefixIcon: Icon(Icons.search),
-                              hintText: 'Search channels',
-                              isDense: true,
-                            ),
-                            onChanged: (v) =>
-                                setState(() => _query = v),
-                          ),
+                          ],
                         ),
-                        Expanded(
-                          child: shown.isEmpty
-                              ? const Center(
-                                  child: Text('No channels found'),
-                                )
-                              : ListView.builder(
-                                  itemCount: shown.length,
-                                  itemBuilder: (_, i) {
-                                    final c = shown[i];
-                                    return ListTile(
-                                      leading: SizedBox(
-                                        width: 42,
-                                        child: c.logo.isEmpty
-                                            ? const Icon(Icons.tv)
-                                            : Image.network(
-                                                c.logo,
-                                                errorBuilder:
-                                                    (_, __, ___) =>
-                                                        const Icon(Icons.tv),
-                                              ),
-                                      ),
-                                      title: Text(
-                                        c.name,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                      subtitle: c.group.isEmpty
-                                          ? null
-                                          : Text(
-                                              c.group,
-                                              maxLines: 1,
-                                            ),
-                                      trailing: IconButton(
-                                        onPressed: () =>
-                                            _toggleChannelFav(c),
-                                        icon: Icon(
-                                          _favs.contains(c.id)
-                                              ? Icons.star
-                                              : Icons.star_border,
-                                        ),
-                                        color: Colors.amber,
-                                      ),
-                                      onTap: () =>
-                                          _playChannel(shown, i),
-                                    );
-                                  },
-                                ),
+                      ),
+                      Expanded(
+                        child: Column(
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 5),
+                              child: TextField(
+                                decoration: const InputDecoration(
+                                  prefixIcon: Icon(Icons.search),
+                                  hintText: 'Search channels', isDense: true),
+                                onChanged: (v) => setState(() => _query = v),
+                              ),
+                            ),
+                            Expanded(
+                              child: shown.isEmpty
+                                  ? const Center(child: Text('No channels found'))
+                                  : ListView.builder(
+                                      itemCount: shown.length,
+                                      itemBuilder: (_, i) {
+                                        final c = shown[i];
+                                        return ListTile(
+                                          leading: SizedBox(width: 42,
+                                            child: c.logo.isEmpty
+                                                ? const Icon(Icons.tv)
+                                                : Image.network(c.logo,
+                                                    errorBuilder: (_, __, ___) =>
+                                                        const Icon(Icons.tv))),
+                                          title: Text(c.name, maxLines: 1,
+                                              overflow: TextOverflow.ellipsis),
+                                          subtitle: c.group.isEmpty
+                                              ? null : Text(c.group, maxLines: 1),
+                                          trailing: IconButton(
+                                            onPressed: () => _toggleChannelFav(c),
+                                            icon: Icon(_favs.contains(c.id)
+                                                ? Icons.star : Icons.star_border),
+                                            color: Colors.amber,
+                                          ),
+                                          onTap: () => _playChannel(shown, i),
+                                        );
+                                      },
+                                    ),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            )
-          else
-            Expanded(
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      _tab == 1
-                          ? Icons.movie
-                          : Icons.video_library,
-                      size: 50,
-                      color: const Color(0xFFC8742B),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(_tab == 1
-                        ? '${_movies.length} movies'
-                        : '${_series.length} series'),
-                    const SizedBox(height: 10),
-                    FilledButton(
-                      onPressed:
-                          _tab == 1 ? _openMovies : _openSeries,
-                      child: Text(
-                          _tab == 1 ? 'Browse movies' : 'Browse series'),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+                      ),
+                    ],
+                  )
+                : _tab == 0
+                    ? _buildHomeContent()
+                    : Center(child: Text(_tab == 2
+                        ? '${_movies.length} movies available'
+                        : '${_series.length} series available')),
+          ),
+        ],
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _tab,
+        onDestinationSelected: (index) {
+          if (index == 2) {
+            setState(() => _tab = 2);
+            _openMovies();
+          } else if (index == 3) {
+            setState(() => _tab = 3);
+            _openSeries();
+          } else {
+            setState(() => _tab = index);
+          }
+        },
+        destinations: const [
+          NavigationDestination(icon: Icon(Icons.home_outlined),
+              selectedIcon: Icon(Icons.home), label: 'Home'),
+          NavigationDestination(icon: Icon(Icons.live_tv), label: 'Live TV'),
+          NavigationDestination(icon: Icon(Icons.movie_outlined),
+              selectedIcon: Icon(Icons.movie), label: 'Movies'),
+          NavigationDestination(icon: Icon(Icons.video_library_outlined),
+              selectedIcon: Icon(Icons.video_library), label: 'Series'),
         ],
       ),
     );
   }
 
-  Widget _section(
-    String title,
-    IconData icon,
-    bool selected,
-    VoidCallback onTap,
-  ) =>
-      FilledButton.tonal(
-        style: FilledButton.styleFrom(
-          backgroundColor: selected
-              ? const Color(0xFFC8742B)
-              : Theme.of(context)
-                  .colorScheme
-                  .surfaceContainerHighest,
-          padding: const EdgeInsets.symmetric(vertical: 12),
-        ),
-        onPressed: onTap,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 18),
-            const SizedBox(width: 5),
-            Text(title, style: const TextStyle(fontSize: 12)),
-          ],
-        ),
+  Widget _buildHomeContent() {
+    if (_continue.isEmpty) {
+      return Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.live_tv, size: 64, color: Color(0xFFC8742B)),
+          const SizedBox(height: 12),
+          const Text('Welcome to MOKA IPTV',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 6),
+          Text('${_channels.length} live channels • ${_movies.length} movies • ${_series.length} series'),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: () => setState(() => _tab = 1),
+            icon: const Icon(Icons.play_arrow), label: const Text('Watch Live TV')),
+        ]),
       );
+    }
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const Text('Continue Watching',
+            style: TextStyle(fontSize: 21, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 165,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: _continue.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 12),
+            itemBuilder: (_, i) {
+              final item = _continue[i];
+              return SizedBox(
+                width: 112,
+                child: InkWell(
+                  onTap: () async {
+                    await Navigator.push(context, MaterialPageRoute(
+                      builder: (_) => MediaPlayerPage(
+                        name: item.name, url: item.url, id: item.id,
+                        poster: item.poster, mediaType: item.type,
+                      ),
+                    ));
+                    await _refreshContinue();
+                  },
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: Stack(fit: StackFit.expand, children: [
+                        Poster(item.poster, fallback: item.type == 'series'
+                            ? Icons.tv : Icons.movie),
+                        const Positioned(right: 5, bottom: 5,
+                          child: CircleAvatar(radius: 15,
+                            child: Icon(Icons.play_arrow, size: 20)),
+                        ),
+                      ])),
+                      const SizedBox(height: 6),
+                      Text(item.name, maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 12)),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
 }
