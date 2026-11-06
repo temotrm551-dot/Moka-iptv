@@ -32,14 +32,16 @@ class Channel {
 
 class MediaItem {
   final String id, name, category, poster, url, type;
+  final int catOrder; // position of the category in the server's own list
   const MediaItem({required this.id, required this.name, required this.category,
-    required this.poster, required this.url, required this.type});
+    required this.poster, required this.url, required this.type, this.catOrder = 9999});
 }
 
 class SeriesItem {
   final String id, name, category, poster, plot;
+  final int catOrder;
   const SeriesItem({required this.id, required this.name, required this.category,
-    required this.poster, this.plot = ''});
+    required this.poster, this.plot = '', this.catOrder = 9999});
 }
 
 class Episode {
@@ -163,7 +165,11 @@ Future<List<MediaItem>> loadMovies(Source s) async {
     _getJson('${_api(s)}&action=get_vod_streams'),
   ]);
   final cats = <String, String>{};
-  if (r[0] is List) for (final c in r[0]) { cats['${c['category_id']}'] = '${c['category_name']}'; }
+  final catPos = <String, int>{};
+  if (r[0] is List) {
+    var n = 0;
+    for (final c in r[0]) { cats['${c['category_id']}'] = '${c['category_name']}'; catPos['${c['category_id']}'] = n++; }
+  }
   if (r[1] is! List) throw 'Invalid movies response';
   // Normalize provider dates to Unix seconds so seconds and milliseconds
   // are never mixed. When no date exists, use stream_id as a fallback.
@@ -193,7 +199,8 @@ Future<List<MediaItem>> loadMovies(Source s) async {
   return [for (final x in rawMovies)
     MediaItem(id: '${x['stream_id']}', name: '${x['name'] ?? 'Movie'}',
       category: cats['${x['category_id']}'] ?? 'Other',
-      poster: '${x['stream_icon'] ?? ''}', url: _movieUrl(s, x), type: 'movie')];
+      poster: '${x['stream_icon'] ?? ''}', url: _movieUrl(s, x), type: 'movie',
+      catOrder: catPos['${x['category_id']}'] ?? 9999)];
 }
 
 Future<List<SeriesItem>> loadSeries(Source s) async {
@@ -203,7 +210,11 @@ Future<List<SeriesItem>> loadSeries(Source s) async {
     _getJson('${_api(s)}&action=get_series'),
   ]);
   final cats = <String, String>{};
-  if (r[0] is List) for (final c in r[0]) { cats['${c['category_id']}'] = '${c['category_name']}'; }
+  final catPos = <String, int>{};
+  if (r[0] is List) {
+    var n = 0;
+    for (final c in r[0]) { cats['${c['category_id']}'] = '${c['category_name']}'; catPos['${c['category_id']}'] = n++; }
+  }
   if (r[1] is! List) throw 'Invalid series response';
   final rawSeries = List<dynamic>.from(r[1]);
   int seriesKey(dynamic x) {
@@ -222,7 +233,8 @@ Future<List<SeriesItem>> loadSeries(Source s) async {
   return [for (final x in rawSeries)
     SeriesItem(id: '${x['series_id']}', name: '${x['name'] ?? 'Series'}',
       category: cats['${x['category_id']}'] ?? 'Other',
-      poster: '${x['cover'] ?? ''}', plot: '${x['plot'] ?? ''}')];
+      poster: '${x['cover'] ?? ''}', plot: '${x['plot'] ?? ''}',
+      catOrder: catPos['${x['category_id']}'] ?? 9999)];
 }
 
 Future<List<Episode>> loadEpisodes(Source s, String id) async {
@@ -1053,7 +1065,11 @@ class _MediaGridPageState extends State<MediaGridPage> {
     for (final x in widget.items) {
       if (x.category.isNotEmpty) counts[x.category] = (counts[x.category] ?? 0) + 1;
     }
-    final cats = counts.keys.toList()..sort();
+    final order = <String, int>{for (final x in widget.items) x.category: x.catOrder};
+    final cats = counts.keys.toList()..sort((a, b) {
+      final d = (order[a] ?? 9999).compareTo(order[b] ?? 9999);
+      return d != 0 ? d : a.compareTo(b);
+    });
     Iterable<MediaItem> base;
     if (_sel == '__all') { base = widget.items; }
     else if (_sel == '__fav') { base = widget.items.where(_isFav); }
@@ -1111,7 +1127,11 @@ class _SeriesBrowserPageState extends State<SeriesBrowserPage> {
     for (final x in widget.items) {
       if (x.category.isNotEmpty) counts[x.category] = (counts[x.category] ?? 0) + 1;
     }
-    final cats = counts.keys.toList()..sort();
+    final order = <String, int>{for (final x in widget.items) x.category: x.catOrder};
+    final cats = counts.keys.toList()..sort((a, b) {
+      final d = (order[a] ?? 9999).compareTo(order[b] ?? 9999);
+      return d != 0 ? d : a.compareTo(b);
+    });
     Iterable<SeriesItem> base;
     if (_sel == '__all') { base = widget.items; }
     else if (_sel == '__fav') { base = widget.items.where(_isFav); }
