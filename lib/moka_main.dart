@@ -882,6 +882,78 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
   }
 }
 
+// ================= BROWSE LAYOUT (Movies + Series) =================
+
+const _favCat = '★ Favorites';
+
+class _BrowseLayout extends StatelessWidget {
+  final List<String> categories;
+  final String selected, hint;
+  final int favCount;
+  final ValueChanged<String> onSelect, onQuery;
+  final Widget body;
+  const _BrowseLayout({required this.categories, required this.selected,
+    required this.hint, required this.favCount, required this.onSelect,
+    required this.onQuery, required this.body});
+
+  @override
+  Widget build(BuildContext context) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Container(
+        width: 150,
+        decoration: BoxDecoration(border: Border(
+          right: BorderSide(color: Theme.of(context).dividerColor))),
+        child: ListView.builder(
+          padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
+          itemCount: categories.length,
+          itemBuilder: (_, i) {
+            final cat = categories[i];
+            final isFav = cat == _favCat;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: ChoiceChip(
+                visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                showCheckmark: false,
+                avatar: isFav ? const Icon(Icons.star, size: 16, color: Colors.amber) : null,
+                label: SizedBox(width: double.infinity, child: Text(
+                  isFav ? 'Favorites ($favCount)' : cat,
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12.5))),
+                selected: cat == selected,
+                onSelected: (_) => onSelect(cat)));
+          }),
+      ),
+      Expanded(child: Column(children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(10, 4, 10, 0),
+          child: SizedBox(height: 40, child: TextField(
+            style: const TextStyle(fontSize: 14),
+            decoration: InputDecoration(
+              prefixIcon: const Icon(Icons.search, size: 20),
+              hintText: hint, isDense: true,
+              contentPadding: const EdgeInsets.symmetric(vertical: 8)),
+            onChanged: onQuery)),
+        ),
+        Expanded(child: body),
+      ])),
+    ],
+  );
+}
+
+SliverGridDelegate _posterGrid() => const SliverGridDelegateWithMaxCrossAxisExtent(
+  maxCrossAxisExtent: 118, childAspectRatio: .62,
+  crossAxisSpacing: 8, mainAxisSpacing: 8);
+
+Widget _favStar(bool fav, VoidCallback onTap) => Positioned(top: 1, right: 1,
+  child: IconButton(
+    iconSize: 18, visualDensity: VisualDensity.compact,
+    padding: const EdgeInsets.all(3), constraints: const BoxConstraints(),
+    style: IconButton.styleFrom(backgroundColor: Colors.black54),
+    onPressed: onTap,
+    icon: Icon(fav ? Icons.star : Icons.star_border, color: Colors.amber)));
+
 // ================= MOVIES GRID =================
 
 class MediaGridPage extends StatefulWidget {
@@ -897,57 +969,42 @@ class MediaGridPage extends StatefulWidget {
 }
 class _MediaGridPageState extends State<MediaGridPage> {
   String _category = 'All', _query = '';
-  bool _onlyFav = false;
+  bool _isFav(MediaItem x) =>
+      widget.favorites.contains('movie_${x.id}') || widget.favorites.contains(x.id);
   @override
   Widget build(BuildContext context) {
     final cats = <String>{for (final x in widget.items) if (x.category.isNotEmpty) x.category}.toList()..sort();
+    final q = _query.toLowerCase();
     final list = widget.items.where((x) =>
-      (!_onlyFav || widget.favorites.contains('movie_${x.id}') || widget.favorites.contains(x.id)) &&
-      (_category == 'All' || x.category == _category) &&
-      x.name.toLowerCase().contains(_query.toLowerCase())).toList();
-    return Column(children: [
-      Align(alignment: Alignment.centerRight, child: IconButton(tooltip: 'Favorites only', onPressed: () => setState(() => _onlyFav = !_onlyFav),
-        icon: Icon(_onlyFav ? Icons.star : Icons.star_border), color: Colors.amber)),
-      Expanded(child: Row(children: [
-      Container(width: 190, decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface,
-        border: Border(right: BorderSide(color: Theme.of(context).dividerColor))),
-        child: ListView(padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
-          children: [for (final cat in ['All', ...cats]) Padding(padding: const EdgeInsets.only(bottom: 6),
-            child: ChoiceChip(label: SizedBox(width: double.infinity, child: Text(cat, maxLines: 1, overflow: TextOverflow.ellipsis)),
-              selected: _category == cat, onSelected: (_) => setState(() => _category = cat))) ])),
-      Expanded(child: Column(children: [
-        Padding(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-          child: TextField(decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search movies', isDense: true),
-            onChanged: (v) => setState(() => _query = v))),
-        Expanded(child: list.isEmpty ? const Center(child: Text('No movies found'))
-          : LayoutBuilder(builder: (context, box) {
-            final count = (box.maxWidth / 145).floor().clamp(3, 9).toInt();
-            return GridView.builder(padding: const EdgeInsets.all(10),
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: count,
-                childAspectRatio: .68, crossAxisSpacing: 10, mainAxisSpacing: 10),
-              itemCount: list.length, itemBuilder: (_, i) {
-                final x = list[i];
-                final fav = widget.favorites.contains('movie_${x.id}') || widget.favorites.contains(x.id);
-                return InkWell(onTap: () => widget.onPlay(x), child: Column(children: [
-                  Expanded(child: Stack(fit: StackFit.expand, children: [
-                    Poster(x.poster),
-                    Positioned(top: 2, right: 2, child: IconButton(
-                      visualDensity: VisualDensity.compact,
-                      style: IconButton.styleFrom(backgroundColor: Colors.black54),
-                      onPressed: () { widget.onFavorite(x); setState(() {}); },
-                      icon: Icon(fav ? Icons.star : Icons.star_border, color: Colors.amber))),
-                  ])),
-                  const SizedBox(height: 5),
-                  Text(x.name, maxLines: 2, textAlign: TextAlign.center, overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12)),
-                ]));
-              });
-          })),
-      ])),
-    ])),
-    ]);
+      (_category == _favCat ? _isFav(x) : (_category == 'All' || x.category == _category)) &&
+      x.name.toLowerCase().contains(q)).toList();
+    final favCount = widget.items.where(_isFav).length;
+    return _BrowseLayout(
+      categories: [_favCat, 'All', ...cats],
+      selected: _category, hint: 'Search movies', favCount: favCount,
+      onSelect: (v) => setState(() => _category = v),
+      onQuery: (v) => setState(() => _query = v),
+      body: list.isEmpty
+        ? Center(child: Text(_category == _favCat ? 'No favorite movies yet' : 'No movies found'))
+        : GridView.builder(
+            padding: const EdgeInsets.all(8), gridDelegate: _posterGrid(),
+            itemCount: list.length, itemBuilder: (_, i) {
+              final x = list[i];
+              return InkWell(onTap: () => widget.onPlay(x), child: Column(children: [
+                Expanded(child: Stack(fit: StackFit.expand, children: [
+                  Poster(x.poster),
+                  _favStar(_isFav(x), () { widget.onFavorite(x); setState(() {}); }),
+                ])),
+                const SizedBox(height: 3),
+                Text(x.name, maxLines: 2, textAlign: TextAlign.center,
+                  overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11)),
+              ]));
+            }),
+    );
   }
 }
+
+// ================= SERIES BROWSER =================
 
 class SeriesBrowserPage extends StatefulWidget {
   final List<SeriesItem> items;
@@ -961,57 +1018,41 @@ class SeriesBrowserPage extends StatefulWidget {
 }
 class _SeriesBrowserPageState extends State<SeriesBrowserPage> {
   String _category = 'All', _query = '';
-  bool _onlyFav = false;
+  bool _isFav(SeriesItem x) => widget.favorites.contains('series_${x.id}');
   @override
   Widget build(BuildContext context) {
     final cats = <String>{for (final x in widget.items) if (x.category.isNotEmpty) x.category}.toList()..sort();
+    final q = _query.toLowerCase();
     final list = widget.items.where((x) =>
-      (!_onlyFav || widget.favorites.contains('series_${x.id}')) &&
-      (_category == 'All' || x.category == _category) &&
-      x.name.toLowerCase().contains(_query.toLowerCase())).toList();
-    return Column(children: [
-      Align(alignment: Alignment.centerRight, child: IconButton(tooltip: 'Favorites only', onPressed: () => setState(() => _onlyFav = !_onlyFav),
-        icon: Icon(_onlyFav ? Icons.star : Icons.star_border), color: Colors.amber)),
-      Expanded(child: Row(children: [
-      Container(width: 190, decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface,
-        border: Border(right: BorderSide(color: Theme.of(context).dividerColor))),
-        child: ListView(padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
-          children: [for (final cat in ['All', ...cats]) Padding(padding: const EdgeInsets.only(bottom: 6),
-            child: ChoiceChip(label: SizedBox(width: double.infinity, child: Text(cat, maxLines: 1, overflow: TextOverflow.ellipsis)),
-              selected: _category == cat, onSelected: (_) => setState(() => _category = cat))) ])),
-      Expanded(child: Column(children: [
-        Padding(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-          child: TextField(decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search series', isDense: true),
-            onChanged: (v) => setState(() => _query = v))),
-        Expanded(child: list.isEmpty ? const Center(child: Text('No series found'))
-          : LayoutBuilder(builder: (context, box) {
-            final count = (box.maxWidth / 145).floor().clamp(3, 9).toInt();
-            return GridView.builder(padding: const EdgeInsets.all(10),
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: count,
-                childAspectRatio: .68, crossAxisSpacing: 10, mainAxisSpacing: 10),
-              itemCount: list.length, itemBuilder: (_, i) {
-                final item = list[i]; final fav = widget.favorites.contains('series_${item.id}');
-                return InkWell(onTap: () => Navigator.push(context, MaterialPageRoute(
+      (_category == _favCat ? _isFav(x) : (_category == 'All' || x.category == _category)) &&
+      x.name.toLowerCase().contains(q)).toList();
+    final favCount = widget.items.where(_isFav).length;
+    return _BrowseLayout(
+      categories: [_favCat, 'All', ...cats],
+      selected: _category, hint: 'Search series', favCount: favCount,
+      onSelect: (v) => setState(() => _category = v),
+      onQuery: (v) => setState(() => _query = v),
+      body: list.isEmpty
+        ? Center(child: Text(_category == _favCat ? 'No favorite series yet' : 'No series found'))
+        : GridView.builder(
+            padding: const EdgeInsets.all(8), gridDelegate: _posterGrid(),
+            itemCount: list.length, itemBuilder: (_, i) {
+              final item = list[i];
+              return InkWell(
+                onTap: () => Navigator.push(context, MaterialPageRoute(
                   builder: (_) => SeriesDetailsPage(series: item, source: widget.source,
                     favorites: widget.favorites, onFavorite: widget.onFavorite))),
-                  child: Column(children: [
-                    Expanded(child: Stack(fit: StackFit.expand, children: [
-                      Poster(item.poster, fallback: Icons.tv),
-                      Positioned(top: 2, right: 2, child: IconButton(
-                        visualDensity: VisualDensity.compact,
-                        style: IconButton.styleFrom(backgroundColor: Colors.black54),
-                        onPressed: () { widget.onFavorite(item.id); setState(() {}); },
-                        icon: Icon(fav ? Icons.star : Icons.star_border, color: Colors.amber))),
-                    ])),
-                    const SizedBox(height: 5),
-                    Text(item.name, maxLines: 2, textAlign: TextAlign.center,
-                      overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
-                  ]));
-              });
-          })),
-      ])),
-    ])),
-    ]);
+                child: Column(children: [
+                  Expanded(child: Stack(fit: StackFit.expand, children: [
+                    Poster(item.poster, fallback: Icons.tv),
+                    _favStar(_isFav(item), () { widget.onFavorite(item.id); setState(() {}); }),
+                  ])),
+                  const SizedBox(height: 3),
+                  Text(item.name, maxLines: 2, textAlign: TextAlign.center,
+                    overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11)),
+                ]));
+            }),
+    );
   }
 }
 
@@ -1328,7 +1369,7 @@ class _HomePageState extends State<HomePage> {
       SeriesBrowserPage(items: _series, source: _source!, favorites: _mediaFavs, onFavorite: _toggleSeriesFav),
     ];
     return Scaffold(
-      appBar: AppBar(title: const Text('MOKA IPTV', style: TextStyle(fontWeight: FontWeight.bold)),
+      appBar: AppBar(toolbarHeight: 46, title: const Text('MOKA IPTV', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 19)),
         actions: [
           IconButton(tooltip: 'Account details', onPressed: _openAccount, icon: const Icon(Icons.account_circle)),
           IconButton(tooltip: 'Settings', onPressed: _openSettings, icon: const Icon(Icons.settings)),
@@ -1340,7 +1381,7 @@ class _HomePageState extends State<HomePage> {
         if (_error != null) Padding(padding: const EdgeInsets.all(8), child: Text(_error!, style: const TextStyle(color: Colors.redAccent))),
         Expanded(child: IndexedStack(index: _tab, children: pages)),
       ]),
-      bottomNavigationBar: NavigationBar(height: 62, selectedIndex: _tab,
+      bottomNavigationBar: NavigationBar(height: 54, selectedIndex: _tab,
         onDestinationSelected: (index) => setState(() => _tab = index),
         destinations: const [
           NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Home'),
