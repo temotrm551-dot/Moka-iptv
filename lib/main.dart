@@ -560,8 +560,17 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 }
 
-// مهم: سيبنا اتجاه الشاشة تلقائي حسب الجهاز، من غير فرض portrait أو landscape.
-void main() => runApp(const MokaApp());
+// تثبيت اتجاه التطبيق بالعرض.
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.landscapeLeft,
+    DeviceOrientation.landscapeRight,
+  ]);
+
+  runApp(const MokaApp());
+}
 
 class MokaApp extends StatelessWidget {
   const MokaApp({super.key});
@@ -674,7 +683,7 @@ class _HomePageState extends State<HomePage> {
     if (mounted) setState(() {});
   }
 
-  // نافذة إضافة الاشتراك: حجم أصغر مع الحفاظ على اتجاه الشاشة.
+  // نافذة إضافة اشتراك صغيرة ومناسبة للشاشة بالعرض.
   Future<void> _addSource() async {
     final name = TextEditingController();
     final url = TextEditingController();
@@ -689,14 +698,14 @@ class _HomePageState extends State<HomePage> {
           scrollable: true,
           insetPadding: const EdgeInsets.symmetric(
             horizontal: 28,
-            vertical: 18,
+            vertical: 8,
           ),
-          titlePadding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-          contentPadding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-          actionsPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+          titlePadding: const EdgeInsets.fromLTRB(16, 8, 16, 2),
+          contentPadding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
+          actionsPadding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
           title: const Text(
             'Add playlist',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
           ),
           content: SizedBox(
             width: 260,
@@ -712,19 +721,13 @@ class _HomePageState extends State<HomePage> {
                     ),
                   ),
                   segments: const [
-                    ButtonSegment(
-                      value: 'm3u',
-                      label: Text('M3U'),
-                    ),
-                    ButtonSegment(
-                      value: 'xtream',
-                      label: Text('Xtream'),
-                    ),
+                    ButtonSegment(value: 'm3u', label: Text('M3U')),
+                    ButtonSegment(value: 'xtream', label: Text('Xtream')),
                   ],
                   selected: {type},
                   onSelectionChanged: (v) => setD(() => type = v.first),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 5),
                 TextField(
                   controller: name,
                   style: const TextStyle(fontSize: 13),
@@ -733,11 +736,11 @@ class _HomePageState extends State<HomePage> {
                     isDense: true,
                     contentPadding: EdgeInsets.symmetric(
                       horizontal: 10,
-                      vertical: 9,
+                      vertical: 8,
                     ),
                   ),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 5),
                 TextField(
                   controller: url,
                   keyboardType: TextInputType.url,
@@ -749,12 +752,12 @@ class _HomePageState extends State<HomePage> {
                     isDense: true,
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 10,
-                      vertical: 9,
+                      vertical: 8,
                     ),
                   ),
                 ),
                 if (type == 'xtream') ...[
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 5),
                   TextField(
                     controller: user,
                     style: const TextStyle(fontSize: 13),
@@ -763,11 +766,11 @@ class _HomePageState extends State<HomePage> {
                       isDense: true,
                       contentPadding: EdgeInsets.symmetric(
                         horizontal: 10,
-                        vertical: 9,
+                        vertical: 8,
                       ),
                     ),
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 5),
                   TextField(
                     controller: pass,
                     obscureText: true,
@@ -777,7 +780,7 @@ class _HomePageState extends State<HomePage> {
                       isDense: true,
                       contentPadding: EdgeInsets.symmetric(
                         horizontal: 10,
-                        vertical: 9,
+                        vertical: 8,
                       ),
                     ),
                   ),
@@ -820,6 +823,11 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
     );
+
+    name.dispose();
+    url.dispose();
+    user.dispose();
+    pass.dispose();
 
     if (s == null) return;
     _sources.add(s);
