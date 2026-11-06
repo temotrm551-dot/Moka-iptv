@@ -638,6 +638,13 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
     String two(int n) => n.toString().padLeft(2, '0');
     return '${two(d.inHours)}:${two(d.inMinutes.remainder(60))}:${two(d.inSeconds.remainder(60))}';
   }
+  Future<void> _seekBy(int seconds) async {
+    final c = _c;
+    if (c == null || !c.value.isInitialized) return;
+    final target = c.value.position + Duration(seconds: seconds);
+    final duration = c.value.duration;
+    await c.seekTo(target < Duration.zero ? Duration.zero : (target > duration ? duration : target));
+  }
   @override
   void dispose() {
     _timer?.cancel(); _save(); _c?.removeListener(_changed); _c?.dispose();
@@ -657,10 +664,16 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
           Padding(padding: const EdgeInsets.symmetric(horizontal: 20),
             child: VideoProgressIndicator(c, allowScrubbing: true, padding: const EdgeInsets.symmetric(vertical: 12))),
           Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Text(_time(c.value.position)), const SizedBox(width: 20),
-            IconButton(iconSize: 48, onPressed: () { c.value.isPlaying ? c.pause() : c.play(); setState(() {}); },
-              icon: Icon(c.value.isPlaying ? Icons.pause_circle : Icons.play_circle)),
-            const SizedBox(width: 20), Text(_time(c.value.duration)),
+            Text(_time(c.value.position)), const SizedBox(width: 10),
+            IconButton(tooltip: 'رجوع 10 ثواني', iconSize: 38,
+              onPressed: () => _seekBy(-10), icon: const Icon(Icons.replay_10)),
+            IconButton(iconSize: 48, onPressed: () async {
+              if (c.value.isPlaying) { await c.pause(); } else { await c.play(); }
+              if (mounted) setState(() {});
+            }, icon: Icon(c.value.isPlaying ? Icons.pause_circle : Icons.play_circle)),
+            IconButton(tooltip: 'تقديم 10 ثواني', iconSize: 38,
+              onPressed: () => _seekBy(10), icon: const Icon(Icons.forward_10)),
+            const SizedBox(width: 10), Text(_time(c.value.duration)),
           ]),
         ]) : const SizedBox()),
     );
@@ -693,11 +706,14 @@ class _MediaGridPageState extends State<MediaGridPage> {
     return Scaffold(appBar: AppBar(title: Text(widget.title), actions: [
       IconButton(onPressed: () => setState(() => _onlyFav = !_onlyFav),
         icon: Icon(_onlyFav ? Icons.star : Icons.star_border), color: Colors.amber),
-    ]),
-      body: Column(children: [
-        SizedBox(height: 45, child: ListView(scrollDirection: Axis.horizontal, padding: const EdgeInsets.symmetric(horizontal: 10),
-          children: [for (final cat in ['All', ...cats]) Padding(padding: const EdgeInsets.only(right: 7),
-            child: ChoiceChip(label: Text(cat), selected: _category == cat, onSelected: (_) => setState(() => _category = cat))) ])),
+    ]), body: Row(children: [
+      Container(width: 190, decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface,
+        border: Border(right: BorderSide(color: Theme.of(context).dividerColor))),
+        child: ListView(padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+          children: [for (final cat in ['All', ...cats]) Padding(padding: const EdgeInsets.only(bottom: 6),
+            child: ChoiceChip(label: SizedBox(width: double.infinity, child: Text(cat, maxLines: 1, overflow: TextOverflow.ellipsis)),
+              selected: _category == cat, onSelected: (_) => setState(() => _category = cat))) ])),
+      Expanded(child: Column(children: [
         Padding(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
           child: TextField(decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search movies', isDense: true),
             onChanged: (v) => setState(() => _query = v))),
@@ -725,12 +741,10 @@ class _MediaGridPageState extends State<MediaGridPage> {
                 ]));
               });
           })),
-      ]),
-    );
+      ])),
+    ]));
   }
 }
-
-// ================= SERIES BROWSER =================
 
 class SeriesBrowserPage extends StatefulWidget {
   final List<SeriesItem> items;
@@ -755,39 +769,44 @@ class _SeriesBrowserPageState extends State<SeriesBrowserPage> {
     return Scaffold(appBar: AppBar(title: const Text('Series'), actions: [
       IconButton(onPressed: () => setState(() => _onlyFav = !_onlyFav),
         icon: Icon(_onlyFav ? Icons.star : Icons.star_border), color: Colors.amber),
-    ]), body: Column(children: [
-      SizedBox(height: 45, child: ListView(scrollDirection: Axis.horizontal, padding: const EdgeInsets.symmetric(horizontal: 10),
-        children: [for (final cat in ['All', ...cats]) Padding(padding: const EdgeInsets.only(right: 7),
-          child: ChoiceChip(label: Text(cat), selected: _category == cat, onSelected: (_) => setState(() => _category = cat))) ])),
-      Padding(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-        child: TextField(decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search series', isDense: true),
-          onChanged: (v) => setState(() => _query = v))),
-      Expanded(child: list.isEmpty ? const Center(child: Text('No series found'))
-        : LayoutBuilder(builder: (context, box) {
-          final count = (box.maxWidth / 145).floor().clamp(3, 9).toInt();
-          return GridView.builder(padding: const EdgeInsets.all(10),
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: count,
-              childAspectRatio: .68, crossAxisSpacing: 10, mainAxisSpacing: 10),
-            itemCount: list.length, itemBuilder: (_, i) {
-              final s = list[i]; final fav = widget.favorites.contains('series_${s.id}');
-              return InkWell(onTap: () => Navigator.push(context, MaterialPageRoute(
-                builder: (_) => SeriesDetailsPage(series: s, source: widget.source,
-                  favorites: widget.favorites, onFavorite: widget.onFavorite))),
-                child: Column(children: [
-                  Expanded(child: Stack(fit: StackFit.expand, children: [
-                    Poster(s.poster, fallback: Icons.tv),
-                    Positioned(top: 2, right: 2, child: IconButton(
-                      visualDensity: VisualDensity.compact,
-                      style: IconButton.styleFrom(backgroundColor: Colors.black54),
-                      onPressed: () { widget.onFavorite(s.id); setState(() {}); },
-                      icon: Icon(fav ? Icons.star : Icons.star_border, color: Colors.amber))),
-                  ])),
-                  const SizedBox(height: 5),
-                  Text(s.name, maxLines: 2, textAlign: TextAlign.center,
-                    overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
-                ]));
-            });
-        })),
+    ]), body: Row(children: [
+      Container(width: 190, decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface,
+        border: Border(right: BorderSide(color: Theme.of(context).dividerColor))),
+        child: ListView(padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+          children: [for (final cat in ['All', ...cats]) Padding(padding: const EdgeInsets.only(bottom: 6),
+            child: ChoiceChip(label: SizedBox(width: double.infinity, child: Text(cat, maxLines: 1, overflow: TextOverflow.ellipsis)),
+              selected: _category == cat, onSelected: (_) => setState(() => _category = cat))) ])),
+      Expanded(child: Column(children: [
+        Padding(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+          child: TextField(decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search series', isDense: true),
+            onChanged: (v) => setState(() => _query = v))),
+        Expanded(child: list.isEmpty ? const Center(child: Text('No series found'))
+          : LayoutBuilder(builder: (context, box) {
+            final count = (box.maxWidth / 145).floor().clamp(3, 9).toInt();
+            return GridView.builder(padding: const EdgeInsets.all(10),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: count,
+                childAspectRatio: .68, crossAxisSpacing: 10, mainAxisSpacing: 10),
+              itemCount: list.length, itemBuilder: (_, i) {
+                final item = list[i]; final fav = widget.favorites.contains('series_${item.id}');
+                return InkWell(onTap: () => Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => SeriesDetailsPage(series: item, source: widget.source,
+                    favorites: widget.favorites, onFavorite: widget.onFavorite))),
+                  child: Column(children: [
+                    Expanded(child: Stack(fit: StackFit.expand, children: [
+                      Poster(item.poster, fallback: Icons.tv),
+                      Positioned(top: 2, right: 2, child: IconButton(
+                        visualDensity: VisualDensity.compact,
+                        style: IconButton.styleFrom(backgroundColor: Colors.black54),
+                        onPressed: () { widget.onFavorite(item.id); setState(() {}); },
+                        icon: Icon(fav ? Icons.star : Icons.star_border, color: Colors.amber))),
+                    ])),
+                    const SizedBox(height: 5),
+                    Text(item.name, maxLines: 2, textAlign: TextAlign.center,
+                      overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
+                  ]));
+              });
+          })),
+      ])),
     ]));
   }
 }
