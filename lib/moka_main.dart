@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -163,23 +164,31 @@ Future<List<MediaItem>> loadMovies(Source s) async {
   final cats = <String, String>{};
   if (r[0] is List) for (final c in r[0]) { cats['${c['category_id']}'] = '${c['category_name']}'; }
   if (r[1] is! List) throw 'Invalid movies response';
-  // Xtream usually provides `added` as a Unix timestamp. Sort newest first;
-  // if the provider omits it, use the numeric stream ID as a stable fallback.
+  // Normalize provider dates to Unix seconds so seconds and milliseconds
+  // are never mixed. When no date exists, use stream_id as a fallback.
   final rawMovies = List<dynamic>.from(r[1]);
-  int addedValue(dynamic x) {
-    if (x is! Map) return 0;
-    // Providers may send Unix seconds, milliseconds, or a date string.
+  int? movieAddedAt(dynamic x) {
+    if (x is! Map) return null;
     for (final key in ['added', 'last_modified']) {
       final raw = x[key];
-      if (raw == null || '$raw'.trim().isEmpty) continue;
+      if (raw == null || '$raw'.trim().isEmpty || '$raw' == '0') continue;
       final numeric = int.tryParse('$raw');
-      if (numeric != null) return numeric;
+      if (numeric != null) return numeric > 99999999999 ? numeric ~/ 1000 : numeric;
       final parsed = DateTime.tryParse('$raw');
       if (parsed != null) return parsed.millisecondsSinceEpoch ~/ 1000;
     }
-    return int.tryParse('${x['stream_id'] ?? 0}') ?? 0;
+    return null;
   }
-  rawMovies.sort((a, b) => addedValue(b).compareTo(addedValue(a)));
+  int movieSortKey(dynamic x) => movieAddedAt(x) ??
+      (int.tryParse('${(x is Map ? x['stream_id'] : 0) ?? 0}') ?? 0);
+  rawMovies.sort((a, b) {
+    final byDate = movieSortKey(b).compareTo(movieSortKey(a));
+    if (byDate != 0) return byDate;
+    // Keep a deterministic newest-first fallback when dates are identical.
+    final aId = int.tryParse('${a is Map ? a['stream_id'] ?? 0 : 0}') ?? 0;
+    final bId = int.tryParse('${b is Map ? b['stream_id'] ?? 0 : 0}') ?? 0;
+    return bId.compareTo(aId);
+  });
   return [for (final x in rawMovies)
     MediaItem(id: '${x['stream_id']}', name: '${x['name'] ?? 'Movie'}',
       category: cats['${x['category_id']}'] ?? 'Other',
@@ -708,6 +717,18 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
     await c.seekTo(target < Duration.zero ? Duration.zero : (target > duration ? duration : target));
   }
 
+  Future<void> _seekFromCircularDrag(Offset local, Size size) async {
+    final c = _c;
+    if (c == null || !c.value.isInitialized || c.value.duration.inMilliseconds <= 0) return;
+    final dx = local.dx - size.width / 2;
+    final dy = local.dy - size.height / 2;
+    var angle = math.atan2(dy, dx) + math.pi / 2;
+    if (angle < 0) angle += 2 * math.pi;
+    final fraction = (angle / (2 * math.pi)).clamp(0.0, 1.0);
+    final targetMs = (c.value.duration.inMilliseconds * fraction).round();
+    await c.seekTo(Duration(milliseconds: targetMs));
+  }
+
   Future<void> _togglePlayback() async {
     final c = _c;
     if (c == null || !c.value.isInitialized) return;
@@ -800,15 +821,6 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
                             child: Center(child: ConstrainedBox(
                               constraints: const BoxConstraints(maxWidth: 1200),
                               child: Column(mainAxisSize: MainAxisSize.min, children: [
-                                VideoProgressIndicator(
-                                  c, allowScrubbing: true,
-                                  colors: const VideoProgressColors(
-                                    playedColor: Color(0xFFC8742B),
-                                    bufferedColor: Colors.white54,
-                                    backgroundColor: Colors.white30,
-                                  ),
-                                  padding: EdgeInsets.symmetric(vertical: compact ? 8 : 12),
-                                ),
                                 Row(children: [
                                   Text(_time(c.value.position),
                                     style: TextStyle(color: Colors.white, fontSize: compact ? 10 : 14)),
@@ -820,13 +832,34 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
                                     onPressed: () => _seekBy(-10),
                                     icon: const Icon(Icons.replay_10, color: Colors.white),
                                   ),
-                                  IconButton(
-                                    tooltip: c.value.isPlaying ? 'إيقاف مؤقت' : 'تشغيل',
-                                    visualDensity: VisualDensity.compact,
-                                    iconSize: compact ? 40 : 54,
-                                    onPressed: _togglePlayback,
-                                    icon: Icon(c.value.isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
-                                      color: Colors.white),
+                                  GestureDetector(
+                                    behavior: HitTestBehavior.opaque,
+                                    onPanDown: (details) => _seekFromCircularDrag(
+                                      details.localPosition, Size(compact ? 54 : 68, compact ? 54 : 68)),
+                                    onPanUpdate: (details) => _seekFromCircularDrag(
+                                      details.localPosition, Size(compact ? 54 : 68, compact ? 54 : 68)),
+                                    child: SizedBox(
+                                      width: compact ? 54 : 68,
+                                      height: compact ? 54 : 68,
+                                      child: Stack(alignment: Alignment.center, children: [
+                                        SizedBox.expand(child: CircularProgressIndicator(
+                                          value: c.value.duration.inMilliseconds > 0
+                                              ? (c.value.position.inMilliseconds / c.value.duration.inMilliseconds).clamp(0.0, 1.0)
+                                              : 0,
+                                          strokeWidth: compact ? 3 : 4,
+                                          backgroundColor: Colors.white30,
+                                          valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFFC8742B)),
+                                        )),
+                                        IconButton(
+                                          tooltip: c.value.isPlaying ? 'إيقاف مؤقت' : 'تشغيل',
+                                          visualDensity: VisualDensity.compact,
+                                          iconSize: compact ? 38 : 50,
+                                          onPressed: _togglePlayback,
+                                          icon: Icon(c.value.isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
+                                            color: Colors.white),
+                                        ),
+                                      ]),
+                                    ),
                                   ),
                                   IconButton(
                                     tooltip: 'تقديم 10 ثواني',
