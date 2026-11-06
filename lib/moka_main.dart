@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
-import 'dart:ui' show FontFeature;
+import 'dart:ui' show FontFeature, ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -44,11 +44,19 @@ class SeriesItem {
     required this.poster, this.plot = '', this.catOrder = 9999});
 }
 
+class SeriesDetails {
+  final List<Episode> episodes;
+  final String plot, genre, releaseDate, director, backdrop;
+  final double rating; // out of 5
+  const SeriesDetails({required this.episodes, this.plot = '', this.genre = '',
+    this.releaseDate = '', this.director = '', this.backdrop = '', this.rating = 0});
+}
+
 class Episode {
-  final String id, name, url;
-  final int season, number;
+  final String id, name, url, thumb;
+  final int season, number, durationSecs;
   const Episode({required this.id, required this.name, required this.url,
-    required this.season, required this.number});
+    required this.season, required this.number, this.thumb = '', this.durationSecs = 0});
 }
 
 class EpgItem {
@@ -237,8 +245,9 @@ Future<List<SeriesItem>> loadSeries(Source s) async {
       catOrder: catPos['${x['category_id']}'] ?? 9999)];
 }
 
-Future<List<Episode>> loadEpisodes(Source s, String id) async {
+Future<SeriesDetails> loadSeriesDetails(Source s, String id) async {
   final d = await _getJson('${_api(s)}&action=get_series_info&series_id=$id');
+  String str(dynamic v) { final t = '${v ?? ''}'.trim(); return t == 'null' ? '' : t; }
   final out = <Episode>[];
   final seasons = d is Map ? d['episodes'] : null;
   if (seasons is Map) {
@@ -246,15 +255,28 @@ Future<List<Episode>> loadEpisodes(Source s, String id) async {
       final season = int.tryParse('${entry.key}') ?? 1;
       if (entry.value is! List) continue;
       for (final x in entry.value) {
+        final Map xi = x is Map && x['info'] is Map ? x['info'] as Map : const {};
         out.add(Episode(id: '${x['id']}', name: '${x['title'] ?? 'Episode ${x['episode_num'] ?? ''}'}',
           url: _episodeUrl(s, x), season: season,
-          number: int.tryParse('${x['episode_num']}') ?? 0));
+          number: int.tryParse('${x['episode_num']}') ?? 0,
+          thumb: str(xi['movie_image']),
+          durationSecs: int.tryParse(str(xi['duration_secs'])) ?? 0));
       }
     }
   }
   out.sort((a,b) => a.season != b.season ? a.season.compareTo(b.season) : a.number.compareTo(b.number));
-  return out;
+  final Map info = d is Map && d['info'] is Map ? d['info'] as Map : const {};
+  final bd = info['backdrop_path'];
+  final backdrop = bd is List ? (bd.isNotEmpty ? str(bd.first) : '') : str(bd);
+  var rating = double.tryParse(str(info['rating_5based'])) ?? 0;
+  if (rating <= 0) rating = (double.tryParse(str(info['rating'])) ?? 0) / 2;
+  return SeriesDetails(episodes: out, plot: str(info['plot']), genre: str(info['genre']),
+    releaseDate: str(info['releaseDate'] ?? info['release_date']),
+    director: str(info['director']), backdrop: backdrop, rating: rating);
 }
+
+Future<List<Episode>> loadEpisodes(Source s, String id) async =>
+    (await loadSeriesDetails(s, id)).episodes;
 
 Future<List<EpgItem>> loadEpg(Source s, Channel c) async {
   if (s.type != 'xtream' || c.streamId.isEmpty) return [];
@@ -287,6 +309,13 @@ class Store {
   static Future<void> saveMediaFavs(Set<String> v) async => (await p).setStringList('media_favs', v.toList());
   static Future<int> progress(String id) async => (await p).getInt('progress_$id') ?? 0;
   static Future<void> saveProgress(String id, int ms) async => (await p).setInt('progress_$id', ms);
+  static Future<List<String>> watchingSeries() async =>
+      List<String>.from((await p).getStringList('watching_series') ?? const <String>[]);
+  static Future<void> saveWatchingSeries(List<String> v) async =>
+      (await p).setStringList('watching_series', v);
+  static Future<String?> lastEpisode(String seriesId) async => (await p).getString('last_ep_$seriesId');
+  static Future<void> saveLastEpisode(String seriesId, String epId) async =>
+      (await p).setString('last_ep_$seriesId', epId);
   static Future<String?> lastId() async => (await p).getString('last');
   static Future<void> saveLast(String id) async => (await p).setString('last', id);
   static Future<String?> pin() async => (await p).getString('pin');
@@ -301,6 +330,10 @@ class Store {
     await prefs.remove('sources');
     await prefs.remove('active');
     await prefs.remove('last');
+    await prefs.remove('watching_series');
+    for (final key in prefs.getKeys().where((k) => k.startsWith('last_ep_')).toList()) {
+      await prefs.remove(key);
+    }
     // Remove account-specific viewing progress; keep parental controls and favorites.
     for (final key in prefs.getKeys().where((k) => k.startsWith('progress_')).toList()) {
       await prefs.remove(key);
@@ -1001,14 +1034,6 @@ SliverGridDelegate _posterGrid() => const SliverGridDelegateWithMaxCrossAxisExte
   maxCrossAxisExtent: 130, childAspectRatio: .66,
   crossAxisSpacing: 8, mainAxisSpacing: 8);
 
-Widget _favStar(bool fav, VoidCallback onTap) => Positioned(top: 3, right: 3,
-  child: IconButton(
-    iconSize: 18, visualDensity: VisualDensity.compact,
-    padding: const EdgeInsets.all(3), constraints: const BoxConstraints(),
-    style: IconButton.styleFrom(backgroundColor: Colors.black54),
-    onPressed: onTap,
-    icon: Icon(fav ? Icons.star : Icons.star_border, color: Colors.amber)));
-
 class _PosterCard extends StatelessWidget {
   final String name, poster;
   final IconData fallback;
@@ -1020,6 +1045,14 @@ class _PosterCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) => InkWell(
     onTap: onTap,
+    onLongPress: () {
+      onFav();
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(
+          duration: const Duration(seconds: 1),
+          content: Text(fav ? 'Removed from favourites' : 'Added to favourites')));
+    },
     borderRadius: BorderRadius.circular(8),
     child: ClipRRect(borderRadius: BorderRadius.circular(8),
       child: Stack(fit: StackFit.expand, children: [
@@ -1032,7 +1065,10 @@ class _PosterCard extends StatelessWidget {
           child: Text(name, maxLines: 2, textAlign: TextAlign.center,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)))),
-        _favStar(fav, onFav),
+        if (fav) Positioned(top: 5, right: 5, child: Container(
+          padding: const EdgeInsets.all(3),
+          decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+          child: const Icon(Icons.star, size: 13, color: Colors.amber))),
       ])),
   );
 }
@@ -1119,6 +1155,13 @@ class SeriesBrowserPage extends StatefulWidget {
 }
 class _SeriesBrowserPageState extends State<SeriesBrowserPage> {
   String _sel = '__all', _query = '';
+  List<String> _watching = [];
+  @override
+  void initState() { super.initState(); _loadWatching(); }
+  Future<void> _loadWatching() async {
+    final v = await Store.watchingSeries();
+    if (mounted) setState(() => _watching = v);
+  }
   bool _isFav(SeriesItem x) => widget.favorites.contains('series_${x.id}');
 
   @override
@@ -1132,9 +1175,13 @@ class _SeriesBrowserPageState extends State<SeriesBrowserPage> {
       final d = (order[a] ?? 9999).compareTo(order[b] ?? 9999);
       return d != 0 ? d : a.compareTo(b);
     });
+    final byId = <String, SeriesItem>{for (final x in widget.items) x.id: x};
+    final continueList = <SeriesItem>[
+      for (final id in _watching) if (byId[id] != null) byId[id]!];
     Iterable<SeriesItem> base;
     if (_sel == '__all') { base = widget.items; }
     else if (_sel == '__fav') { base = widget.items.where(_isFav); }
+    else if (_sel == '__continue') { base = continueList; }
     else if (_sel == '__recent') { base = widget.items.take(30); }
     else { base = widget.items.where((x) => x.category == _sel); }
     final q = _query.toLowerCase();
@@ -1143,6 +1190,7 @@ class _SeriesBrowserPageState extends State<SeriesBrowserPage> {
       entries: [
         _CatEntry('__all', 'ALL', widget.items.length),
         _CatEntry('__fav', 'FAVOURITES', widget.items.where(_isFav).length),
+        _CatEntry('__continue', 'CONTINUE WATCHING', continueList.length),
         _CatEntry('__recent', 'RECENTLY ADDED', math.min(30, widget.items.length)),
         for (final c in cats) _CatEntry(c, c, counts[c] ?? 0),
       ],
@@ -1158,13 +1206,22 @@ class _SeriesBrowserPageState extends State<SeriesBrowserPage> {
               final item = list[i];
               return _PosterCard(name: item.name, poster: item.poster,
                 fallback: Icons.tv, fav: _isFav(item),
-                onTap: () => Navigator.push(context, MaterialPageRoute(
-                  builder: (_) => SeriesDetailsPage(series: item, source: widget.source,
-                    favorites: widget.favorites, onFavorite: widget.onFavorite))),
+                onTap: () async {
+                  await Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => SeriesDetailsPage(series: item, source: widget.source,
+                      favorites: widget.favorites, onFavorite: widget.onFavorite)));
+                  await _loadWatching();
+                },
                 onFav: () { widget.onFavorite(item.id); setState(() {}); });
             }),
     );
   }
+}
+
+String _fmtMs(int ms) {
+  String two(int n) => n.toString().padLeft(2, '0');
+  final d = Duration(milliseconds: ms);
+  return '${two(d.inHours)}:${two(d.inMinutes.remainder(60))}:${two(d.inSeconds.remainder(60))}';
 }
 
 class SeriesDetailsPage extends StatefulWidget {
@@ -1177,76 +1234,247 @@ class SeriesDetailsPage extends StatefulWidget {
   @override
   State<SeriesDetailsPage> createState() => _SeriesDetailsPageState();
 }
+
 class _SeriesDetailsPageState extends State<SeriesDetailsPage> {
-  List<Episode> _episodes = [];
+  static const _brand = Color(0xFFC8742B);
+  SeriesDetails? _d;
   bool _loading = true;
   String? _error;
   int? _season;
+  Map<String, int> _prog = {};
+  String? _lastEp;
+
   @override
   void initState() { super.initState(); _load(); }
+
   Future<void> _load() async {
-    try { final v = await loadEpisodes(widget.source, widget.series.id);
-      if (mounted) setState(() { _episodes = v; _loading = false; });
-    } catch (e) { if (mounted) setState(() { _error = '$e'; _loading = false; }); }
+    try {
+      final d = await loadSeriesDetails(widget.source, widget.series.id);
+      final prefs = await Store.p;
+      final prog = <String, int>{
+        for (final e in d.episodes) e.id: prefs.getInt('progress_episode_${e.id}') ?? 0};
+      final last = await Store.lastEpisode(widget.series.id);
+      int? season;
+      for (final e in d.episodes) { if (e.id == last) season = e.season; }
+      season ??= d.episodes.isEmpty ? null : d.episodes.first.season;
+      if (mounted) setState(() { _d = d; _prog = prog; _lastEp = last; _season = season; _loading = false; });
+    } catch (e) {
+      if (mounted) setState(() { _error = '$e'; _loading = false; });
+    }
   }
+
+  List<Episode> get _episodes => _d?.episodes ?? const <Episode>[];
+  List<int> get _seasons => _episodes.map((e) => e.season).toSet().toList()..sort();
+  Episode? get _target {
+    final eps = _episodes;
+    if (eps.isEmpty) return null;
+    for (final e in eps) { if (e.id == _lastEp) return e; }
+    return eps.first;
+  }
+
+  Future<void> _play(Episode ep) async {
+    await Navigator.push(context, MaterialPageRoute(builder: (_) =>
+      MediaPlayerPage(name: ep.name, url: ep.url, id: 'episode_${ep.id}')));
+    final saved = await Store.progress('episode_${ep.id}');
+    if (saved > 0) {
+      await Store.saveLastEpisode(widget.series.id, ep.id);
+      final l = await Store.watchingSeries();
+      l.remove(widget.series.id);
+      l.insert(0, widget.series.id);
+      await Store.saveWatchingSeries(l);
+    }
+    if (mounted) setState(() { _prog[ep.id] = saved; if (saved > 0) _lastEp = ep.id; });
+  }
+
+  String _two(int n) => n.toString().padLeft(2, '0');
+
+  Widget _chip(String t, {IconData? icon}) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+    decoration: BoxDecoration(color: Colors.white12, borderRadius: BorderRadius.circular(20)),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      if (icon != null) ...[Icon(icon, size: 13, color: Colors.amber), const SizedBox(width: 3)],
+      Text(t, style: const TextStyle(fontSize: 11.5)),
+    ]));
+
+  Widget _backdrop() {
+    final url = (_d?.backdrop.isNotEmpty ?? false) ? _d!.backdrop : widget.series.poster;
+    return Stack(fit: StackFit.expand, children: [
+      if (url.isNotEmpty) ClipRect(child: ImageFiltered(
+        imageFilter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+        child: Image.network(url, fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => const SizedBox.shrink()))),
+      Container(decoration: BoxDecoration(gradient: LinearGradient(
+        begin: Alignment.topCenter, end: Alignment.bottomCenter,
+        colors: [Colors.black.withOpacity(.55), Colors.black.withOpacity(.93)]))),
+    ]);
+  }
+
+  Widget _episodeTile(Episode ep) {
+    final ms = _prog[ep.id] ?? 0;
+    final isLast = _lastEp == ep.id;
+    final frac = (ep.durationSecs > 0 && ms > 0)
+        ? (ms / (ep.durationSecs * 1000)).clamp(0.0, 1.0).toDouble() : 0.0;
+    final parts = <String>[
+      'S${_two(ep.season)}E${_two(ep.number)}',
+      if (ep.durationSecs > 0) '${(ep.durationSecs / 60).round()} min',
+      if (ms > 0) 'Resume ${_fmtMs(ms)}',
+    ];
+    Widget thumbFallback() => Container(color: Colors.white10,
+      child: const Center(child: Icon(Icons.tv, color: Colors.white38)));
+    return InkWell(
+      onTap: () => _play(ep),
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(.07),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: isLast ? _brand : Colors.transparent)),
+        child: Row(children: [
+          SizedBox(width: 128, height: 72, child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Stack(fit: StackFit.expand, children: [
+              ep.thumb.isEmpty ? thumbFallback()
+                : Image.network(ep.thumb, fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => thumbFallback()),
+              Container(color: Colors.black26),
+              const Center(child: Icon(Icons.play_circle_fill, size: 30, color: Colors.white70)),
+              if (frac > 0) Positioned(left: 0, right: 0, bottom: 0, child: LinearProgressIndicator(
+                value: frac, minHeight: 3, color: _brand, backgroundColor: Colors.black54)),
+            ]))),
+          const SizedBox(width: 12),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(ep.name, maxLines: 2, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 3),
+            Text(parts.join('  •  '), maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: isLast ? Colors.amber : Colors.white60)),
+          ])),
+        ]),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final seasons = _episodes.map((e) => e.season).toSet().toList()..sort();
-    final visible = _season == null ? _episodes : _episodes.where((e) => e.season == _season).toList();
+    final seasons = _seasons;
+    final visible = _season == null
+        ? _episodes : _episodes.where((e) => e.season == _season).toList();
     final fav = widget.favorites.contains('series_${widget.series.id}');
+    final plot = (_d?.plot.isNotEmpty ?? false) ? _d!.plot : widget.series.plot;
+    final t = _target;
+    final tMs = t == null ? 0 : (_prog[t.id] ?? 0);
+    final playLabel = t == null ? 'Play'
+        : '${tMs > 0 ? 'Resume' : 'Play'} – S${t.season}:E${t.number}';
+    final meta = <Widget>[
+      if ((_d?.releaseDate ?? '').isNotEmpty) _chip(_d!.releaseDate, icon: Icons.calendar_today),
+      if ((_d?.genre ?? '').isNotEmpty) _chip(_d!.genre),
+      if ((_d?.rating ?? 0) > 0) _chip(_d!.rating.toStringAsFixed(1), icon: Icons.star),
+    ];
 
-    Widget seasonPicker() => SizedBox(height: 44, child: ListView(
-      scrollDirection: Axis.horizontal,
-      children: [
-        Padding(padding: const EdgeInsets.symmetric(horizontal: 4), child: ChoiceChip(
-          label: const Text('All seasons'), selected: _season == null,
-          onSelected: (_) => setState(() => _season = null))),
-        for (final n in seasons) Padding(padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: ChoiceChip(label: Text('Part / Season $n'), selected: _season == n,
-            onSelected: (_) => setState(() => _season = n))),
-      ],
-    ));
-
-    Widget episodeList() => Expanded(child: _loading
-      ? const Center(child: CircularProgressIndicator())
-      : _error != null ? Center(child: Text(_error!))
-      : visible.isEmpty ? const Center(child: Text('No episodes found'))
-      : ListView.builder(itemCount: visible.length, itemBuilder: (_, i) {
-          final ep = visible[i];
-          return ListTile(dense: true, leading: const Icon(Icons.play_circle_outline),
-            title: Text(ep.name, maxLines: 2, overflow: TextOverflow.ellipsis),
-            subtitle: Text('Part / Season ${ep.season} • Episode ${ep.number}'),
-            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) =>
-              MediaPlayerPage(name: ep.name, url: ep.url, id: 'episode_${ep.id}'))));
-        }));
-
-    return Scaffold(appBar: AppBar(title: Text(widget.series.name), actions: [
-      IconButton(onPressed: () { widget.onFavorite(widget.series.id); setState(() {}); },
-        icon: Icon(fav ? Icons.star : Icons.star_border), color: Colors.amber),
-    ]), body: LayoutBuilder(builder: (context, constraints) {
-      final landscape = constraints.maxWidth > constraints.maxHeight;
-      final details = Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        if (widget.series.poster.isNotEmpty)
-          SizedBox(height: landscape ? 105 : 135, child: Padding(padding: const EdgeInsets.all(6),
-            child: Poster(widget.series.poster, fallback: Icons.tv))),
-        if (widget.series.plot.isNotEmpty)
-          Padding(padding: const EdgeInsets.all(8), child: Text(widget.series.plot,
-            maxLines: landscape ? 2 : 3, overflow: TextOverflow.ellipsis)),
-      ]);
-      if (landscape) {
-        return Row(children: [
-          SizedBox(width: (constraints.maxWidth * .34).clamp(190.0, 330.0), child: details),
-          const VerticalDivider(width: 1),
-          Expanded(child: Column(children: [
-            if (!_loading && seasons.isNotEmpty) seasonPicker(),
-            episodeList(),
+    final header = Padding(
+      padding: const EdgeInsets.fromLTRB(8, 0, 16, 4),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          IconButton(tooltip: 'Back', onPressed: () => Navigator.maybePop(context),
+            icon: const Icon(Icons.arrow_back)),
+          Expanded(child: Text(widget.series.name, maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold))),
+        ]),
+        const SizedBox(height: 4),
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const SizedBox(width: 8),
+          Container(
+            width: 128,
+            decoration: BoxDecoration(borderRadius: BorderRadius.circular(8),
+              boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 14, offset: Offset(0, 6))]),
+            child: AspectRatio(aspectRatio: 2 / 3,
+              child: Poster(widget.series.poster, fallback: Icons.tv))),
+          const SizedBox(width: 16),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            if (meta.isNotEmpty) Wrap(spacing: 6, runSpacing: 6, children: meta),
+            if ((_d?.director ?? '').isNotEmpty) Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text('Directed by: ${_d!.director}', maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12, color: Colors.white60))),
+            if (plot.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(plot, maxLines: 3, overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12.5, height: 1.4, color: Colors.white70)),
+              if (plot.length > 130) InkWell(
+                onTap: () => showDialog<void>(context: context, builder: (_) => AlertDialog(
+                  title: Text(widget.series.name),
+                  content: SingleChildScrollView(child: Text(plot)),
+                  actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))])),
+                child: const Padding(padding: EdgeInsets.symmetric(vertical: 3),
+                  child: Text('Read more', style: TextStyle(
+                    color: _brand, fontSize: 12.5, fontWeight: FontWeight.bold)))),
+            ],
+            const SizedBox(height: 12),
+            Row(children: [
+              FilledButton.icon(
+                style: FilledButton.styleFrom(backgroundColor: _brand,
+                  foregroundColor: Colors.white, minimumSize: const Size(0, 42)),
+                onPressed: t == null ? null : () => _play(t),
+                icon: const Icon(Icons.play_arrow), label: Text(playLabel)),
+              if (seasons.isNotEmpty) ...[
+                const SizedBox(width: 10),
+                PopupMenuButton<int>(
+                  onSelected: (v) => setState(() => _season = v),
+                  itemBuilder: (_) => [for (final n in seasons)
+                    PopupMenuItem<int>(value: n, child: Text('Season $n'))],
+                  child: Container(
+                    height: 42, padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(color: Colors.white10,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.white24)),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Text('Season ${_season ?? seasons.first}'),
+                      const SizedBox(width: 6),
+                      const Icon(Icons.keyboard_arrow_down),
+                    ]))),
+              ],
+              const SizedBox(width: 10),
+              IconButton(
+                tooltip: fav ? 'Remove from favourites' : 'Add to favourites',
+                style: IconButton.styleFrom(backgroundColor: Colors.white10),
+                onPressed: () { widget.onFavorite(widget.series.id); setState(() {}); },
+                icon: Icon(fav ? Icons.favorite : Icons.favorite_border,
+                  color: fav ? Colors.redAccent : Colors.white)),
+            ]),
           ])),
-        ]);
-      }
-      return Column(children: [details, if (!_loading && seasons.isNotEmpty) seasonPicker(), episodeList()]);
-    }));
-  }
+        ]),
+      ]),
+    );
 
+    return Scaffold(
+      backgroundColor: const Color(0xFF110D0B),
+      body: Stack(children: [
+        Positioned.fill(child: _backdrop()),
+        SafeArea(child: CustomScrollView(slivers: [
+          SliverToBoxAdapter(child: header),
+          SliverToBoxAdapter(child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+            child: Text('Episodes (${visible.length})',
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)))),
+          if (_loading)
+            const SliverToBoxAdapter(child: Padding(padding: EdgeInsets.all(30),
+              child: Center(child: CircularProgressIndicator())))
+          else if (_error != null)
+            SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.all(20),
+              child: Center(child: Text(_error!))))
+          else if (visible.isEmpty)
+            const SliverToBoxAdapter(child: Padding(padding: EdgeInsets.all(20),
+              child: Center(child: Text('No episodes found'))))
+          else
+            SliverList(delegate: SliverChildBuilderDelegate(
+              (context, i) => _episodeTile(visible[i]), childCount: visible.length)),
+          const SliverToBoxAdapter(child: SizedBox(height: 16)),
+        ])),
+      ]),
+    );
+  }
 }
 
 // ================= APP & HOME =================
