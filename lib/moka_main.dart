@@ -900,11 +900,12 @@ class _HomePageState extends State<HomePage> {
   List<MediaItem> _movies = [];
   List<SeriesItem> _series = [];
   Set<String> _favs = {}, _mediaFavs = {};
+  Map<String, int> _progress = {};
   String _group = 'All', _query = '';
   String? _lastId;
   bool _hideAdult = false, _loading = false, _ready = false;
   String? _error;
-  int _tab = 0;
+  int _tab = 0; // Home, Live TV, Movies, Series
 
   @override
   void initState() { super.initState(); _init(); }
@@ -918,6 +919,15 @@ class _HomePageState extends State<HomePage> {
     } else if (mounted) setState(() => _ready = true);
   }
 
+  Future<void> _refreshProgress() async {
+    final values = <String, int>{};
+    for (final m in _movies) {
+      final value = await Store.progress('movie_${m.id}');
+      if (value > 0) values['movie_${m.id}'] = value;
+    }
+    if (mounted) setState(() => _progress = values);
+  }
+
   Future<void> _connect(Source source, {bool restore = false}) async {
     if (mounted) setState(() { _loading = true; _error = null; });
     try {
@@ -925,17 +935,16 @@ class _HomePageState extends State<HomePage> {
       List<MediaItem> movies = [];
       List<SeriesItem> series = [];
       if (source.type == 'xtream') {
-        // Start both requests together, while keeping their result types.
-        final movieFuture = loadMovies(source);
-        final seriesFuture = loadSeries(source);
-        movies = await movieFuture;
-        series = await seriesFuture;
+        final results = await Future.wait([loadMovies(source), loadSeries(source)]);
+        movies = results[0] as List<MediaItem>;
+        series = results[1] as List<SeriesItem>;
       }
       await Store.saveSources([source]);
       await Store.saveActive(0);
       _source = source; _channels = live; _movies = movies; _series = series;
       _group = 'All'; _query = '';
       if (mounted) setState(() { _loading = false; _ready = true; _tab = 0; });
+      await _refreshProgress();
     } catch (e) {
       if (mounted) setState(() { _loading = false; _ready = true; _error = '$e'; });
       if (!restore) rethrow;
@@ -943,7 +952,6 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _login(Source s) async { await _connect(s); }
-
   void _toggleChannelFav(Channel c) {
     setState(() { if (!_favs.remove(c.id)) _favs.add(c.id); });
     Store.saveFavs(_favs);
@@ -960,32 +968,17 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _playChannel(List<Channel> list, int index) async {
-    final source = _source;
-    if (source == null) return;
-    await Navigator.push(context, MaterialPageRoute(builder: (_) =>
-      LivePlayerPage(channels: list, index: index, favorites: _favs,
-        onFavorite: _toggleChannelFav, source: source)));
+    final source = _source; if (source == null) return;
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => LivePlayerPage(
+      channels: list, index: index, favorites: _favs,
+      onFavorite: _toggleChannelFav, source: source)));
     _lastId = await Store.lastId();
     if (mounted) setState(() {});
   }
-
-  Future<void> _openMovies() async {
-    await Navigator.push(context, MaterialPageRoute(builder: (_) => MediaGridPage(
-      title: 'Movies', items: _movies, favorites: _mediaFavs,
-      onFavorite: _toggleMovieFav,
-      onPlay: (m) async {
-        await Navigator.push(context, MaterialPageRoute(builder: (_) =>
-          MediaPlayerPage(name: m.name, url: m.url, id: 'movie_${m.id}')));
-      },
-    )));
-    if (mounted) setState(() {});
-  }
-  Future<void> _openSeries() async {
-    final s = _source;
-    if (s == null) return;
+  Future<void> _playMovie(MediaItem m) async {
     await Navigator.push(context, MaterialPageRoute(builder: (_) =>
-      SeriesBrowserPage(items: _series, source: s, favorites: _mediaFavs, onFavorite: _toggleSeriesFav)));
-    if (mounted) setState(() {});
+      MediaPlayerPage(name: m.name, url: m.url, id: 'movie_${m.id}')));
+    await _refreshProgress();
   }
   Future<void> _openAccount() async {
     final s = _source; if (s == null) return;
@@ -1009,16 +1002,60 @@ class _HomePageState extends State<HomePage> {
     await Store.logout();
     if (!mounted) return;
     setState(() {
-      _source = null; _channels = []; _movies = []; _series = [];
+      _source = null; _channels = []; _movies = []; _series = []; _progress = {};
       _lastId = null; _error = null; _ready = true; _tab = 0;
     });
   }
 
-  @override
-  Widget build(BuildContext context) {
-    if (!_ready) return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    if (_source == null) return LoginPage(onLogin: _login);
+  Widget _homeBody() {
+    final recent = _movies.where((m) => (_progress['movie_${m.id}'] ?? 0) > 0).toList()
+      ..sort((a, b) => (_progress['movie_${b.id}'] ?? 0).compareTo(_progress['movie_${a.id}'] ?? 0));
+    return ListView(padding: const EdgeInsets.all(16), children: [
+      Container(padding: const EdgeInsets.all(18), decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        gradient: const LinearGradient(colors: [Color(0xFFC8742B), Color(0xFF713D1D)])),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('MOKA IPTV', style: TextStyle(fontSize: 25, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 5), Text('Welcome${_source == null ? '' : ' • ${_source!.name}'}'),
+          const SizedBox(height: 12),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            _quickButton('Live TV', Icons.live_tv, () => setState(() => _tab = 1)),
+            _quickButton('Movies', Icons.movie, () => setState(() => _tab = 2)),
+            _quickButton('Series', Icons.video_library, () => setState(() => _tab = 3)),
+          ]),
+        ])),
+      const SizedBox(height: 20),
+      Row(children: [const Expanded(child: Text('Continue Watching', style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold))),
+        Text('${recent.length} videos', style: const TextStyle(color: Colors.white60))]),
+      const SizedBox(height: 10),
+      if (recent.isEmpty) const Padding(padding: EdgeInsets.symmetric(vertical: 22),
+        child: Center(child: Text('Your unfinished movies will appear here')))
+      else SizedBox(height: 190, child: ListView.separated(scrollDirection: Axis.horizontal,
+        itemCount: recent.length, separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemBuilder: (_, i) {
+          final m = recent[i];
+          final position = _progress['movie_${m.id}'] ?? 0;
+          return SizedBox(width: 115, child: InkWell(onTap: () => _playMovie(m), child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Expanded(child: Stack(fit: StackFit.expand, children: [Poster(m.poster),
+                const Center(child: Icon(Icons.play_circle_fill, size: 38, color: Colors.white)),
+                Align(alignment: Alignment.bottomCenter, child: LinearProgressIndicator(
+                  value: (position / (position + 600000)).clamp(0.05, 0.95), minHeight: 4)),
+              ])),
+              const SizedBox(height: 6), Text(m.name, maxLines: 2, overflow: TextOverflow.ellipsis),
+            ])));
+        })),
+      const SizedBox(height: 18),
+      Text('${_channels.length} Live channels  •  ${_movies.length} Movies  •  ${_series.length} Series',
+        textAlign: TextAlign.center, style: const TextStyle(color: Colors.white60)),
+    ]);
+  }
 
+  Widget _quickButton(String label, IconData icon, VoidCallback action) =>
+    FilledButton.tonal(onPressed: action, child: Row(mainAxisSize: MainAxisSize.min,
+      children: [Icon(icon, size: 18), const SizedBox(width: 6), Text(label)]));
+
+  Widget _liveBody() {
     final visible = _hideAdult ? _channels.where((c) => !_isAdult(c)).toList() : _channels;
     final groups = <String>{for (final c in visible) if (c.group.isNotEmpty) c.group}.toList()..sort();
     final q = _query.toLowerCase();
@@ -1027,7 +1064,40 @@ class _HomePageState extends State<HomePage> {
       if (_group != 'All' && _group != _favKey && c.group != _group) return false;
       return c.name.toLowerCase().contains(q);
     }).toList();
+    return Column(children: [
+      SizedBox(height: 45, child: ListView(scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        children: [for (final g in ['All', _favKey, ...groups]) Padding(
+          padding: const EdgeInsets.only(right: 7), child: ChoiceChip(label: Text(g),
+            selected: _group == g, onSelected: (_) => setState(() => _group = g))) ])),
+      Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: TextField(
+        decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search channels', isDense: true),
+        onChanged: (v) => setState(() => _query = v))),
+      Expanded(child: shown.isEmpty ? const Center(child: Text('No channels found'))
+        : ListView.builder(itemCount: shown.length, itemBuilder: (_, i) {
+          final c = shown[i];
+          return ListTile(leading: SizedBox(width: 42, child: c.logo.isEmpty ? const Icon(Icons.tv)
+            : Image.network(c.logo, errorBuilder: (_, __, ___) => const Icon(Icons.tv))),
+            title: Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: c.group.isEmpty ? null : Text(c.group, maxLines: 1),
+            trailing: IconButton(onPressed: () => _toggleChannelFav(c),
+              icon: Icon(_favs.contains(c.id) ? Icons.star : Icons.star_border), color: Colors.amber),
+            onTap: () => _playChannel(shown, i));
+        })),
+    ]);
+  }
 
+  @override
+  Widget build(BuildContext context) {
+    if (!_ready) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (_source == null) return LoginPage(onLogin: _login);
+    final pages = <Widget>[
+      _homeBody(),
+      _liveBody(),
+      MediaGridPage(title: 'Movies', items: _movies, favorites: _mediaFavs,
+        onFavorite: _toggleMovieFav, onPlay: _playMovie),
+      SeriesBrowserPage(items: _series, source: _source!, favorites: _mediaFavs, onFavorite: _toggleSeriesFav),
+    ];
     return Scaffold(
       appBar: AppBar(title: const Text('MOKA IPTV', style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
@@ -1038,58 +1108,17 @@ class _HomePageState extends State<HomePage> {
         ]),
       body: Column(children: [
         if (_loading) const LinearProgressIndicator(),
-        if (_error != null) Padding(padding: const EdgeInsets.all(8),
-          child: Text(_error!, style: const TextStyle(color: Colors.redAccent))),
-        Padding(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          child: Row(children: [
-            Expanded(child: _section('Live TV', Icons.live_tv, _tab == 0, () => setState(() => _tab = 0))),
-            const SizedBox(width: 7),
-            Expanded(child: _section('Movies', Icons.movie, _tab == 1, _openMovies)),
-            const SizedBox(width: 7),
-            Expanded(child: _section('Series', Icons.video_library, _tab == 2, _openSeries)),
-          ])),
-        if (_tab == 0) ...[
-          SizedBox(height: 45, child: ListView(scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            children: [for (final g in ['All', _favKey, ...groups])
-              Padding(padding: const EdgeInsets.only(right: 7),
-                child: ChoiceChip(label: Text(g), selected: _group == g,
-                  onSelected: (_) => setState(() => _group = g))) ])),
-          Padding(padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: TextField(decoration: const InputDecoration(prefixIcon: Icon(Icons.search),
-              hintText: 'Search channels', isDense: true),
-              onChanged: (v) => setState(() => _query = v))),
-          Expanded(child: shown.isEmpty ? const Center(child: Text('No channels found'))
-            : ListView.builder(itemCount: shown.length, itemBuilder: (_, i) {
-              final c = shown[i];
-              return ListTile(
-                leading: SizedBox(width: 42, child: c.logo.isEmpty ? const Icon(Icons.tv)
-                  : Image.network(c.logo, errorBuilder: (_, __, ___) => const Icon(Icons.tv))),
-                title: Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-                subtitle: c.group.isEmpty ? null : Text(c.group, maxLines: 1),
-                trailing: IconButton(onPressed: () => _toggleChannelFav(c),
-                  icon: Icon(_favs.contains(c.id) ? Icons.star : Icons.star_border), color: Colors.amber),
-                onTap: () => _playChannel(shown, i),
-              );
-            })),
-        ] else
-          Expanded(child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Icon(_tab == 1 ? Icons.movie : Icons.video_library, size: 50, color: const Color(0xFFC8742B)),
-            const SizedBox(height: 8),
-            Text(_tab == 1 ? '${_movies.length} movies' : '${_series.length} series'),
-            const SizedBox(height: 10),
-            FilledButton(onPressed: _tab == 1 ? _openMovies : _openSeries,
-              child: Text(_tab == 1 ? 'Browse movies' : 'Browse series')),
-          ]))),
+        if (_error != null) Padding(padding: const EdgeInsets.all(8), child: Text(_error!, style: const TextStyle(color: Colors.redAccent))),
+        Expanded(child: IndexedStack(index: _tab, children: pages)),
       ]),
+      bottomNavigationBar: NavigationBar(selectedIndex: _tab,
+        onDestinationSelected: (index) => setState(() => _tab = index),
+        destinations: const [
+          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Home'),
+          NavigationDestination(icon: Icon(Icons.live_tv_outlined), selectedIcon: Icon(Icons.live_tv), label: 'Live TV'),
+          NavigationDestination(icon: Icon(Icons.movie_outlined), selectedIcon: Icon(Icons.movie), label: 'Movies'),
+          NavigationDestination(icon: Icon(Icons.video_library_outlined), selectedIcon: Icon(Icons.video_library), label: 'Series'),
+        ]),
     );
   }
-
-  Widget _section(String title, IconData icon, bool selected, VoidCallback onTap) =>
-    FilledButton.tonal(style: FilledButton.styleFrom(
-      backgroundColor: selected ? const Color(0xFFC8742B) : Theme.of(context).colorScheme.surfaceContainerHighest,
-      padding: const EdgeInsets.symmetric(vertical: 12)),
-      onPressed: onTap, child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Icon(icon, size: 18), const SizedBox(width: 5), Text(title, style: const TextStyle(fontSize: 12)),
-      ]));
 }
