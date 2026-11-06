@@ -163,7 +163,15 @@ Future<List<MediaItem>> loadMovies(Source s) async {
   final cats = <String, String>{};
   if (r[0] is List) for (final c in r[0]) { cats['${c['category_id']}'] = '${c['category_name']}'; }
   if (r[1] is! List) throw 'Invalid movies response';
-  return [for (final x in r[1])
+  // Xtream usually provides `added` as a Unix timestamp. Sort newest first;
+  // if the provider omits it, use the numeric stream ID as a stable fallback.
+  final rawMovies = List<dynamic>.from(r[1]);
+  int addedValue(dynamic x) {
+    final raw = x is Map ? (x['added'] ?? x['last_modified'] ?? x['stream_id']) : null;
+    return int.tryParse('$raw') ?? 0;
+  }
+  rawMovies.sort((a, b) => addedValue(b).compareTo(addedValue(a)));
+  return [for (final x in rawMovies)
     MediaItem(id: '${x['stream_id']}', name: '${x['name'] ?? 'Movie'}',
       category: cats['${x['category_id']}'] ?? 'Other',
       poster: '${x['stream_icon'] ?? ''}', url: _movieUrl(s, x), type: 'movie')];
@@ -605,39 +613,66 @@ class MediaPlayerPage extends StatefulWidget {
   @override
   State<MediaPlayerPage> createState() => _MediaPlayerPageState();
 }
+
 class _MediaPlayerPageState extends State<MediaPlayerPage> {
   VideoPlayerController? _c;
   Timer? _timer;
   bool _loading = true;
   String? _error;
+
   @override
   void initState() {
     super.initState();
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    WakelockPlus.enable(); _start();
+    WakelockPlus.enable();
+    _start();
   }
+
   Future<void> _start() async {
     final c = VideoPlayerController.networkUrl(Uri.parse(widget.url));
     _c = c;
     try {
       await c.initialize();
+      if (!mounted || _c != c) return;
       final saved = await Store.progress(widget.id);
-      if (saved > 0 && saved < c.value.duration.inMilliseconds - 10000) await c.seekTo(Duration(milliseconds: saved));
+      if (saved > 0 && saved < c.value.duration.inMilliseconds - 10000) {
+        await c.seekTo(Duration(milliseconds: saved));
+      }
       await c.play();
       c.addListener(_changed);
       _timer = Timer.periodic(const Duration(seconds: 5), (_) => _save());
       if (mounted) setState(() => _loading = false);
-    } catch (_) { if (mounted) setState(() { _loading = false; _error = 'Unable to play this video'; }); }
+    } catch (_) {
+      if (mounted) setState(() { _loading = false; _error = 'Unable to play this video'; });
+    }
   }
-  void _changed() { if (mounted) setState(() {}); }
+
+  void _changed() {
+    if (!mounted) return;
+    final c = _c;
+    if (c != null && c.value.hasError) {
+      setState(() => _error = 'Video playback error');
+    } else {
+      setState(() {});
+    }
+  }
+
   Future<void> _save() async {
     final c = _c;
-    if (c != null && c.value.isInitialized) await Store.saveProgress(widget.id, c.value.position.inMilliseconds);
+    if (c != null && c.value.isInitialized) {
+      await Store.saveProgress(widget.id, c.value.position.inMilliseconds);
+    }
   }
+
   String _time(Duration d) {
     String two(int n) => n.toString().padLeft(2, '0');
     return '${two(d.inHours)}:${two(d.inMinutes.remainder(60))}:${two(d.inSeconds.remainder(60))}';
   }
+
   Future<void> _seekBy(int seconds) async {
     final c = _c;
     if (c == null || !c.value.isInitialized) return;
@@ -645,37 +680,136 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
     final duration = c.value.duration;
     await c.seekTo(target < Duration.zero ? Duration.zero : (target > duration ? duration : target));
   }
+
+  Future<void> _togglePlayback() async {
+    final c = _c;
+    if (c == null || !c.value.isInitialized) return;
+    if (c.value.isPlaying) {
+      await c.pause();
+    } else {
+      await c.play();
+    }
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
-    _timer?.cancel(); _save(); _c?.removeListener(_changed); _c?.dispose();
-    WakelockPlus.disable(); SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    _timer?.cancel();
+    _save();
+    _c?.removeListener(_changed);
+    _c?.dispose();
+    WakelockPlus.disable();
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
     super.dispose();
   }
+
   @override
   Widget build(BuildContext context) {
     final c = _c;
     final ready = c != null && c.value.isInitialized;
-    return Scaffold(backgroundColor: Colors.black,
-      appBar: AppBar(backgroundColor: Colors.black, title: Text(widget.name)),
-      body: Center(child: _loading ? const CircularProgressIndicator()
-        : _error != null ? Text(_error!)
-        : ready ? Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          AspectRatio(aspectRatio: c.value.aspectRatio, child: VideoPlayer(c)),
-          Padding(padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: VideoProgressIndicator(c, allowScrubbing: true, padding: const EdgeInsets.symmetric(vertical: 12))),
-          Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Text(_time(c.value.position)), const SizedBox(width: 10),
-            IconButton(tooltip: 'رجوع 10 ثواني', iconSize: 38,
-              onPressed: () => _seekBy(-10), icon: const Icon(Icons.replay_10)),
-            IconButton(iconSize: 48, onPressed: () async {
-              if (c.value.isPlaying) { await c.pause(); } else { await c.play(); }
-              if (mounted) setState(() {});
-            }, icon: Icon(c.value.isPlaying ? Icons.pause_circle : Icons.play_circle)),
-            IconButton(tooltip: 'تقديم 10 ثواني', iconSize: 38,
-              onPressed: () => _seekBy(10), icon: const Icon(Icons.forward_10)),
-            const SizedBox(width: 10), Text(_time(c.value.duration)),
-          ]),
-        ]) : const SizedBox()),
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Text(_error!, style: const TextStyle(color: Colors.white)),
+                  const SizedBox(height: 12),
+                  FilledButton.icon(onPressed: () {
+                    setState(() { _loading = true; _error = null; });
+                    _c?.removeListener(_changed);
+                    _c?.dispose();
+                    _start();
+                  }, icon: const Icon(Icons.refresh), label: const Text('Retry')),
+                ]))
+              : !ready
+                  ? const Center(child: CircularProgressIndicator())
+                  : LayoutBuilder(builder: (context, bounds) {
+                      final compact = bounds.maxHeight < 430 || bounds.maxWidth < 700;
+                      final ratio = c.value.aspectRatio > 0 ? c.value.aspectRatio : 16 / 9;
+                      return Stack(fit: StackFit.expand, children: [
+                        // Keep the video fitted inside the available screen area.
+                        Center(child: AspectRatio(
+                          aspectRatio: ratio,
+                          child: VideoPlayer(c),
+                        )),
+                        // Persistent top bar, independent from video tap gestures.
+                        Positioned(
+                          top: 0, left: 0, right: 0,
+                          child: SafeArea(bottom: false, child: Container(
+                            color: Colors.black.withOpacity(.72),
+                            padding: EdgeInsets.symmetric(horizontal: compact ? 4 : 18, vertical: 2),
+                            child: Row(children: [
+                              IconButton(
+                                tooltip: 'Back',
+                                onPressed: () => Navigator.maybePop(context),
+                                icon: const Icon(Icons.arrow_back, color: Colors.white),
+                              ),
+                              Expanded(child: Text(widget.name, maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(color: Colors.white, fontSize: compact ? 14 : 19))),
+                            ]),
+                          )),
+                        ),
+                        // Solid, always-visible playback panel for phones and TVs.
+                        Positioned(
+                          left: 0, right: 0, bottom: 0,
+                          child: SafeArea(top: false, child: Container(
+                            color: Colors.black.withOpacity(.88),
+                            padding: EdgeInsets.fromLTRB(compact ? 8 : 30, compact ? 5 : 10,
+                              compact ? 8 : 30, compact ? 2 : 8),
+                            child: Center(child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 1200),
+                              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                                VideoProgressIndicator(
+                                  c, allowScrubbing: true,
+                                  colors: const VideoProgressColors(
+                                    playedColor: Color(0xFFC8742B),
+                                    bufferedColor: Colors.white54,
+                                    backgroundColor: Colors.white30,
+                                  ),
+                                  padding: EdgeInsets.symmetric(vertical: compact ? 8 : 12),
+                                ),
+                                Row(children: [
+                                  Text(_time(c.value.position),
+                                    style: TextStyle(color: Colors.white, fontSize: compact ? 10 : 14)),
+                                  const Spacer(),
+                                  IconButton(
+                                    tooltip: 'رجوع 10 ثواني',
+                                    visualDensity: VisualDensity.compact,
+                                    iconSize: compact ? 30 : 42,
+                                    onPressed: () => _seekBy(-10),
+                                    icon: const Icon(Icons.replay_10, color: Colors.white),
+                                  ),
+                                  IconButton(
+                                    tooltip: c.value.isPlaying ? 'إيقاف مؤقت' : 'تشغيل',
+                                    visualDensity: VisualDensity.compact,
+                                    iconSize: compact ? 40 : 54,
+                                    onPressed: _togglePlayback,
+                                    icon: Icon(c.value.isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
+                                      color: Colors.white),
+                                  ),
+                                  IconButton(
+                                    tooltip: 'تقديم 10 ثواني',
+                                    visualDensity: VisualDensity.compact,
+                                    iconSize: compact ? 30 : 42,
+                                    onPressed: () => _seekBy(10),
+                                    icon: const Icon(Icons.forward_10, color: Colors.white),
+                                  ),
+                                  const Spacer(),
+                                  Text(_time(c.value.duration),
+                                    style: TextStyle(color: Colors.white, fontSize: compact ? 10 : 14)),
+                                ]),
+                              ]),
+                            )),
+                          )),
+                        ),
+                      ]);
+                    }),
     );
   }
 }
