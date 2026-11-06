@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:ui' show FontFeature;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -653,6 +654,7 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
   bool _controlsVisible = true;
   bool _loading = true;
   String? _error;
+  double? _drag; // seek position (ms) while the user drags the bar
 
   @override
   void initState() {
@@ -731,18 +733,6 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
     await c.seekTo(target < Duration.zero ? Duration.zero : (target > duration ? duration : target));
   }
 
-  Future<void> _seekFromCircularDrag(Offset local, Size size) async {
-    final c = _c;
-    if (c == null || !c.value.isInitialized || c.value.duration.inMilliseconds <= 0) return;
-    final dx = local.dx - size.width / 2;
-    final dy = local.dy - size.height / 2;
-    var angle = math.atan2(dy, dx) + math.pi / 2;
-    if (angle < 0) angle += 2 * math.pi;
-    final fraction = (angle / (2 * math.pi)).clamp(0.0, 1.0);
-    final targetMs = (c.value.duration.inMilliseconds * fraction).round();
-    await c.seekTo(Duration(milliseconds: targetMs));
-  }
-
   Future<void> _togglePlayback() async {
     final c = _c;
     if (c == null || !c.value.isInitialized) return;
@@ -773,10 +763,20 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
     super.dispose();
   }
 
+  Duration _buffered(VideoPlayerController c) {
+    final r = c.value.buffered;
+    return r.isEmpty ? Duration.zero : r.last.end;
+  }
+
+  Widget _roundBtn(IconData icon, double size, VoidCallback onTap, {String? tip}) =>
+    IconButton(tooltip: tip, iconSize: size, onPressed: onTap,
+      icon: Icon(icon, color: Colors.white));
+
   @override
   Widget build(BuildContext context) {
     final c = _c;
     final ready = c != null && c.value.isInitialized;
+    const brand = Color(0xFFC8742B);
     return Scaffold(
       backgroundColor: Colors.black,
       body: _loading
@@ -795,101 +795,92 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
               : !ready
                   ? const Center(child: CircularProgressIndicator())
                   : LayoutBuilder(builder: (context, bounds) {
-                      final compact = bounds.maxHeight < 430 || bounds.maxWidth < 700;
                       final ratio = c.value.aspectRatio > 0 ? c.value.aspectRatio : 16 / 9;
+                      final total = c.value.duration.inMilliseconds;
+                      final pos = c.value.position.inMilliseconds;
+                      final maxV = total > 0 ? total.toDouble() : 1.0;
+                      final shown = (_drag ?? pos.toDouble()).clamp(0.0, maxV).toDouble();
+                      final buf = _buffered(c).inMilliseconds.clamp(0, total > 0 ? total : 1).toDouble();
+                      final playing = c.value.isPlaying;
                       return Stack(fit: StackFit.expand, children: [
-                        // Keep the video fitted inside the available screen area.
-                        Center(child: AspectRatio(
-                          aspectRatio: ratio,
-                          child: VideoPlayer(c),
-                        )),
+                        Center(child: AspectRatio(aspectRatio: ratio, child: VideoPlayer(c))),
                         Positioned.fill(child: GestureDetector(
                           behavior: HitTestBehavior.translucent,
                           onTap: _toggleControls,
-                          child: const SizedBox.expand(),
+                          child: const SizedBox.expand())),
+                        Positioned.fill(child: AnimatedOpacity(
+                          opacity: _controlsVisible ? 1 : 0,
+                          duration: const Duration(milliseconds: 200),
+                          child: IgnorePointer(ignoring: !_controlsVisible, child: Stack(children: [
+                            // ---- top bar ----
+                            Positioned(top: 0, left: 0, right: 0, child: Container(
+                              decoration: BoxDecoration(gradient: LinearGradient(
+                                begin: Alignment.topCenter, end: Alignment.bottomCenter,
+                                colors: [Colors.black.withOpacity(.85), Colors.transparent])),
+                              child: SafeArea(bottom: false, child: Padding(
+                                padding: const EdgeInsets.fromLTRB(4, 2, 12, 14),
+                                child: Row(children: [
+                                  IconButton(tooltip: 'Back',
+                                    onPressed: () => Navigator.maybePop(context),
+                                    icon: const Icon(Icons.arrow_back, color: Colors.white)),
+                                  Expanded(child: Text(widget.name, maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(color: Colors.white,
+                                      fontSize: 17, fontWeight: FontWeight.w600))),
+                                ]))))),
+                            // ---- bottom controls ----
+                            Positioned(bottom: 0, left: 0, right: 0, child: Container(
+                              decoration: BoxDecoration(gradient: LinearGradient(
+                                begin: Alignment.bottomCenter, end: Alignment.topCenter,
+                                colors: [Colors.black.withOpacity(.92), Colors.transparent])),
+                              child: SafeArea(top: false, child: Padding(
+                                padding: const EdgeInsets.fromLTRB(16, 22, 16, 4),
+                                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                                  Row(children: [
+                                    Text(_time(Duration(milliseconds: shown.round())),
+                                      style: const TextStyle(color: Colors.white, fontSize: 12,
+                                        fontFeatures: [FontFeature.tabularFigures()])),
+                                    Expanded(child: SliderTheme(
+                                      data: SliderTheme.of(context).copyWith(
+                                        trackHeight: 3.5,
+                                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+                                        overlayShape: const RoundSliderOverlayShape(overlayRadius: 15),
+                                        activeTrackColor: brand,
+                                        inactiveTrackColor: Colors.white24,
+                                        secondaryActiveTrackColor: Colors.white38,
+                                        thumbColor: brand,
+                                        overlayColor: brand.withOpacity(.25)),
+                                      child: Slider(
+                                        min: 0, max: maxV, value: shown,
+                                        secondaryTrackValue: buf,
+                                        onChangeStart: (_) => _controlsTimer?.cancel(),
+                                        onChanged: total > 0 ? (v) => setState(() => _drag = v) : null,
+                                        onChangeEnd: (v) async {
+                                          await c.seekTo(Duration(milliseconds: v.round()));
+                                          if (mounted) setState(() => _drag = null);
+                                          _scheduleControlsHide();
+                                        }))),
+                                    Text(_time(c.value.duration),
+                                      style: const TextStyle(color: Colors.white70, fontSize: 12,
+                                        fontFeatures: [FontFeature.tabularFigures()])),
+                                  ]),
+                                  Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                                    _roundBtn(Icons.replay_10, 34, () { _seekBy(-10); _scheduleControlsHide(); },
+                                      tip: 'رجوع 10 ثواني'),
+                                    const SizedBox(width: 18),
+                                    Container(
+                                      decoration: const BoxDecoration(color: brand, shape: BoxShape.circle),
+                                      child: IconButton(iconSize: 36, onPressed: _togglePlayback,
+                                        tooltip: playing ? 'إيقاف مؤقت' : 'تشغيل',
+                                        icon: Icon(playing ? Icons.pause : Icons.play_arrow,
+                                          color: Colors.white))),
+                                    const SizedBox(width: 18),
+                                    _roundBtn(Icons.forward_10, 34, () { _seekBy(10); _scheduleControlsHide(); },
+                                      tip: 'تقديم 10 ثواني'),
+                                  ]),
+                                ]))))),
+                          ])),
                         )),
-                        if (_controlsVisible) Positioned(
-                          top: 0, left: 0, right: 0,
-                          child: SafeArea(bottom: false, child: Container(
-                            color: Colors.black.withOpacity(.72),
-                            padding: EdgeInsets.symmetric(horizontal: compact ? 4 : 18, vertical: 2),
-                            child: Row(children: [
-                              IconButton(
-                                tooltip: 'Back',
-                                onPressed: () => Navigator.maybePop(context),
-                                icon: const Icon(Icons.arrow_back, color: Colors.white),
-                              ),
-                              Expanded(child: Text(widget.name, maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(color: Colors.white, fontSize: compact ? 14 : 19))),
-                            ]),
-                          )),
-                        ),
-                        // Solid, always-visible playback panel for phones and TVs.
-                        if (_controlsVisible) Positioned(
-                          left: 0, right: 0, bottom: 0,
-                          child: SafeArea(top: false, child: Container(
-                            color: Colors.black.withOpacity(.88),
-                            padding: EdgeInsets.fromLTRB(compact ? 8 : 30, compact ? 5 : 10,
-                              compact ? 8 : 30, compact ? 2 : 8),
-                            child: Center(child: ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 1200),
-                              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                                Row(children: [
-                                  Text(_time(c.value.position),
-                                    style: TextStyle(color: Colors.white, fontSize: compact ? 10 : 14)),
-                                  const Spacer(),
-                                  IconButton(
-                                    tooltip: 'رجوع 10 ثواني',
-                                    visualDensity: VisualDensity.compact,
-                                    iconSize: compact ? 30 : 42,
-                                    onPressed: () => _seekBy(-10),
-                                    icon: const Icon(Icons.replay_10, color: Colors.white),
-                                  ),
-                                  GestureDetector(
-                                    behavior: HitTestBehavior.opaque,
-                                    onPanDown: (details) => _seekFromCircularDrag(
-                                      details.localPosition, Size(compact ? 54 : 68, compact ? 54 : 68)),
-                                    onPanUpdate: (details) => _seekFromCircularDrag(
-                                      details.localPosition, Size(compact ? 54 : 68, compact ? 54 : 68)),
-                                    child: SizedBox(
-                                      width: compact ? 54 : 68,
-                                      height: compact ? 54 : 68,
-                                      child: Stack(alignment: Alignment.center, children: [
-                                        SizedBox.expand(child: CircularProgressIndicator(
-                                          value: c.value.duration.inMilliseconds > 0
-                                              ? (c.value.position.inMilliseconds / c.value.duration.inMilliseconds).clamp(0.0, 1.0)
-                                              : 0,
-                                          strokeWidth: compact ? 3 : 4,
-                                          backgroundColor: Colors.white30,
-                                          valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFFC8742B)),
-                                        )),
-                                        IconButton(
-                                          tooltip: c.value.isPlaying ? 'إيقاف مؤقت' : 'تشغيل',
-                                          visualDensity: VisualDensity.compact,
-                                          iconSize: compact ? 38 : 50,
-                                          onPressed: _togglePlayback,
-                                          icon: Icon(c.value.isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
-                                            color: Colors.white),
-                                        ),
-                                      ]),
-                                    ),
-                                  ),
-                                  IconButton(
-                                    tooltip: 'تقديم 10 ثواني',
-                                    visualDensity: VisualDensity.compact,
-                                    iconSize: compact ? 30 : 42,
-                                    onPressed: () => _seekBy(10),
-                                    icon: const Icon(Icons.forward_10, color: Colors.white),
-                                  ),
-                                  const Spacer(),
-                                  Text(_time(c.value.duration),
-                                    style: TextStyle(color: Colors.white, fontSize: compact ? 10 : 14)),
-                                ]),
-                              ]),
-                            )),
-                          )),
-                        ),
                       ]);
                     }),
     );
