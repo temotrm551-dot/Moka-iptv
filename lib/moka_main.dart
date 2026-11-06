@@ -1,4 +1,3 @@
-
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -560,8 +559,17 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 }
 
-// مهم: سيبنا اتجاه الشاشة تلقائي حسب الجهاز، من غير فرض portrait أو landscape.
-void main() => runApp(const MokaApp());
+// تشغيل التطبيق بالعرض فقط.
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.landscapeLeft,
+    DeviceOrientation.landscapeRight,
+  ]);
+
+  runApp(const MokaApp());
+}
 
 class MokaApp extends StatelessWidget {
   const MokaApp({super.key});
