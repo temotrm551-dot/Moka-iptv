@@ -874,7 +874,7 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
       await c.setVolume(_muted ? 0.0 : 1.0);
       if (_subs != null) {
         await c.setClosedCaptionFile(Future<ClosedCaptionFile>.value(_subs!));
-        await c.setCaptionOffset(_subOffset);
+        c.setCaptionOffset(_subOffset);
       }
       await c.play();
       _scheduleControlsHide();
@@ -1007,7 +1007,7 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
     _subs = file;
     _subName = name;
     await _c?.setClosedCaptionFile(Future<ClosedCaptionFile>.value(file));
-    await _c?.setCaptionOffset(_subOffset);
+    _c?.setCaptionOffset(_subOffset);
     if (mounted) setState(() {});
   }
 
@@ -1021,7 +1021,7 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
 
   Future<void> _shiftSubs(int ms) async {
     _subOffset += Duration(milliseconds: ms);
-    await _c?.setCaptionOffset(_subOffset);
+    _c?.setCaptionOffset(_subOffset);
     if (mounted) setState(() {});
   }
 
