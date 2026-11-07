@@ -1590,19 +1590,22 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
 
 class _CatEntry {
   final String key, label;
-  final int count;
-  const _CatEntry(this.key, this.label, this.count);
+  const _CatEntry(this.key, this.label);
 }
 
 class _BrowseLayout extends StatefulWidget {
   final List<_CatEntry> entries;
-  final String selected, hint;
+  final String selected, hint, subtitle, defaultSortLabel;
+  final bool sortAz;
   final ValueChanged<String> onSelect, onQuery;
-  final Widget? menu;
+  final ValueChanged<bool> onSort;
+  final List<Widget> actions;
   final Widget body;
   const _BrowseLayout({required this.entries, required this.selected,
-    required this.hint, required this.onSelect, required this.onQuery,
-    required this.body, this.menu});
+    required this.hint, required this.subtitle, required this.sortAz,
+    required this.onSelect, required this.onQuery, required this.onSort,
+    required this.body, this.defaultSortLabel = 'Newest',
+    this.actions = const <Widget>[]});
   @override
   State<_BrowseLayout> createState() => _BrowseLayoutState();
 }
@@ -1611,9 +1614,10 @@ class _BrowseLayoutState extends State<_BrowseLayout> {
   static const _brand = Color(0xFFC8742B);
   bool _searching = false;
   final _ctl = TextEditingController();
+  final _scroll = ScrollController();
 
   @override
-  void dispose() { _ctl.dispose(); super.dispose(); }
+  void dispose() { _ctl.dispose(); _scroll.dispose(); super.dispose(); }
 
   String get _title {
     for (final e in widget.entries) { if (e.key == widget.selected) return e.label; }
@@ -1625,59 +1629,101 @@ class _BrowseLayoutState extends State<_BrowseLayout> {
     setState(() => _searching = false);
   }
 
+  BoxDecoration get _panel => BoxDecoration(
+    color: Colors.white.withOpacity(.05),
+    borderRadius: BorderRadius.circular(16),
+    border: Border.all(color: Colors.white10));
+
   @override
   Widget build(BuildContext context) => Row(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       Container(
-        width: 190,
-        decoration: BoxDecoration(color: Colors.black26, border: Border(
-          right: BorderSide(color: Theme.of(context).dividerColor))),
-        child: ListView.builder(
-          itemCount: widget.entries.length,
-          itemBuilder: (_, i) {
-            final e = widget.entries[i];
-            final sel = e.key == widget.selected;
-            return InkWell(
-              onTap: () => widget.onSelect(e.key),
-              child: Container(
-                height: 42,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                decoration: BoxDecoration(
-                  color: sel ? _brand : null,
-                  border: const Border(bottom: BorderSide(color: Colors.white10))),
-                child: Row(children: [
-                  Expanded(child: Text(e.label, maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 13,
-                      fontWeight: sel ? FontWeight.bold : FontWeight.normal,
-                      color: sel ? Colors.white : null))),
-                  const SizedBox(width: 6),
-                  Text('${e.count}', style: TextStyle(fontSize: 12,
-                    color: sel ? Colors.white : Colors.white60)),
-                ]),
-              ),
-            );
-          }),
+        width: 200,
+        margin: const EdgeInsets.fromLTRB(8, 6, 4, 8),
+        decoration: _panel,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: Scrollbar(
+            controller: _scroll, thumbVisibility: true,
+            child: ListView.builder(
+              controller: _scroll,
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              itemCount: widget.entries.length,
+              itemBuilder: (_, i) {
+                final e = widget.entries[i];
+                final sel = e.key == widget.selected;
+                final isFav = e.key == '__fav';
+                return Column(mainAxisSize: MainAxisSize.min, children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(10),
+                      onTap: () => widget.onSelect(e.key),
+                      child: Container(
+                        constraints: const BoxConstraints(minHeight: 44),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: sel ? _brand.withOpacity(.30) : null,
+                          borderRadius: BorderRadius.circular(10),
+                          border: sel ? Border.all(color: _brand.withOpacity(.75)) : null),
+                        child: Row(children: [
+                          if (isFav) ...[
+                            const Icon(Icons.star_rounded, size: 17, color: Colors.amber),
+                            const SizedBox(width: 6),
+                          ],
+                          Expanded(child: Text(e.label, maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 14, height: 1.2,
+                              fontWeight: sel ? FontWeight.w700 : FontWeight.w500))),
+                        ])))),
+                  if (!sel) const Divider(height: 1, indent: 14, endIndent: 14, color: Colors.white10),
+                ]);
+              }),
+          )),
       ),
       Expanded(child: Column(children: [
-        SizedBox(height: 44, child: Row(children: [
-          const SizedBox(width: 12),
-          Expanded(child: _searching
-            ? TextField(controller: _ctl, autofocus: true,
-                style: const TextStyle(fontSize: 14),
-                decoration: InputDecoration(hintText: widget.hint,
-                  border: InputBorder.none, isDense: true),
-                onChanged: widget.onQuery)
-            : Center(child: Text(_title, maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)))),
-          IconButton(
-            tooltip: 'Search',
-            onPressed: _searching ? _closeSearch : () => setState(() => _searching = true),
-            icon: Icon(_searching ? Icons.close : Icons.search)),
-          if (widget.menu != null) widget.menu!,
-        ])),
+        Container(
+          height: 54,
+          margin: const EdgeInsets.fromLTRB(4, 6, 8, 0),
+          padding: const EdgeInsets.only(left: 14, right: 4),
+          decoration: _panel,
+          child: Row(children: [
+            Expanded(child: _searching
+              ? TextField(controller: _ctl, autofocus: true,
+                  style: const TextStyle(fontSize: 14),
+                  decoration: InputDecoration(hintText: widget.hint,
+                    border: InputBorder.none, isDense: true),
+                  onChanged: widget.onQuery)
+              : Column(mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(_title, maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+                    Text(widget.subtitle, maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 10.5, color: Colors.white60)),
+                  ])),
+            IconButton(
+              tooltip: 'Search',
+              onPressed: _searching ? _closeSearch : () => setState(() => _searching = true),
+              icon: Icon(_searching ? Icons.close : Icons.search)),
+            PopupMenuButton<bool>(
+              tooltip: 'Sort',
+              onSelected: widget.onSort,
+              itemBuilder: (_) => [
+                PopupMenuItem<bool>(value: false, child: Text(widget.defaultSortLabel)),
+                const PopupMenuItem<bool>(value: true, child: Text('A–Z')),
+              ],
+              child: Container(
+                height: 32, padding: const EdgeInsets.symmetric(horizontal: 10),
+                decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.white12)),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Text(widget.sortAz ? 'A–Z' : widget.defaultSortLabel,
+                    style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+                  const Icon(Icons.arrow_drop_down, size: 18),
+                ]))),
+            ...widget.actions,
+          ])),
         Expanded(child: widget.body),
       ])),
     ],
@@ -1734,29 +1780,28 @@ class MediaGridPage extends StatefulWidget {
   final List<MediaItem> items;
   final Set<String> favorites;
   final Map<String, int> progress;
-  final Widget? menu;
   final Future<void> Function(MediaItem) onPlay;
   final void Function(MediaItem) onFavorite;
   const MediaGridPage({super.key, required this.title, required this.items,
     required this.favorites, required this.onPlay, required this.onFavorite,
-    this.progress = const {}, this.menu});
+    this.progress = const {}});
   @override
   State<MediaGridPage> createState() => _MediaGridPageState();
 }
 class _MediaGridPageState extends State<MediaGridPage> {
   String _sel = '__all', _query = '';
+  bool _az = false;
   bool _isFav(MediaItem x) =>
       widget.favorites.contains('movie_${x.id}') || widget.favorites.contains(x.id);
   bool _inProgress(MediaItem x) => (widget.progress['movie_${x.id}'] ?? 0) > 0;
 
   @override
   Widget build(BuildContext context) {
-    final counts = <String, int>{};
+    final order = <String, int>{};
     for (final x in widget.items) {
-      if (x.category.isNotEmpty) counts[x.category] = (counts[x.category] ?? 0) + 1;
+      if (x.category.isNotEmpty) order.putIfAbsent(x.category, () => x.catOrder);
     }
-    final order = <String, int>{for (final x in widget.items) x.category: x.catOrder};
-    final cats = counts.keys.toList()..sort((a, b) {
+    final cats = order.keys.toList()..sort((a, b) {
       final d = (order[a] ?? 9999).compareTo(order[b] ?? 9999);
       return d != 0 ? d : a.compareTo(b);
     });
@@ -1768,21 +1813,25 @@ class _MediaGridPageState extends State<MediaGridPage> {
     else { base = widget.items.where((x) => x.category == _sel); }
     final q = _query.toLowerCase();
     final list = base.where((x) => x.name.toLowerCase().contains(q)).toList();
+    if (_az) list.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     return _BrowseLayout(
       entries: [
-        _CatEntry('__all', 'ALL', widget.items.length),
-        _CatEntry('__fav', 'FAVOURITES', widget.items.where(_isFav).length),
-        _CatEntry('__continue', 'CONTINUE WATCHING', widget.items.where(_inProgress).length),
-        _CatEntry('__recent', 'RECENTLY ADDED', math.min(30, widget.items.length)),
-        for (final c in cats) _CatEntry(c, c, counts[c] ?? 0),
+        const _CatEntry('__all', 'ALL'),
+        const _CatEntry('__fav', 'FAVOURITES'),
+        const _CatEntry('__continue', 'CONTINUE WATCHING'),
+        const _CatEntry('__recent', 'RECENTLY ADDED'),
+        for (final c in cats) _CatEntry(c, c),
       ],
-      selected: _sel, hint: 'Search movies', menu: widget.menu,
+      selected: _sel, hint: 'Search movies',
+      subtitle: '${list.length} titles · tap a title to open',
+      sortAz: _az, defaultSortLabel: 'Newest',
       onSelect: (v) => setState(() => _sel = v),
       onQuery: (v) => setState(() => _query = v),
+      onSort: (v) => setState(() => _az = v),
       body: list.isEmpty
         ? const Center(child: Text('No movies here yet'))
         : GridView.builder(
-            padding: const EdgeInsets.fromLTRB(8, 2, 8, 8),
+            padding: const EdgeInsets.fromLTRB(4, 8, 8, 8),
             gridDelegate: _posterGrid(),
             itemCount: list.length, itemBuilder: (_, i) {
               final x = list[i];
@@ -1800,16 +1849,16 @@ class SeriesBrowserPage extends StatefulWidget {
   final List<SeriesItem> items;
   final Source source;
   final Set<String> favorites;
-  final Widget? menu;
   final int watchTick;
   final void Function(String) onFavorite;
   const SeriesBrowserPage({super.key, required this.items, required this.source,
-    required this.favorites, required this.onFavorite, this.menu, this.watchTick = 0});
+    required this.favorites, required this.onFavorite, this.watchTick = 0});
   @override
   State<SeriesBrowserPage> createState() => _SeriesBrowserPageState();
 }
 class _SeriesBrowserPageState extends State<SeriesBrowserPage> {
   String _sel = '__all', _query = '';
+  bool _az = false;
   List<String> _watching = [];
   @override
   void initState() { super.initState(); _loadWatching(); }
@@ -1826,12 +1875,11 @@ class _SeriesBrowserPageState extends State<SeriesBrowserPage> {
 
   @override
   Widget build(BuildContext context) {
-    final counts = <String, int>{};
+    final order = <String, int>{};
     for (final x in widget.items) {
-      if (x.category.isNotEmpty) counts[x.category] = (counts[x.category] ?? 0) + 1;
+      if (x.category.isNotEmpty) order.putIfAbsent(x.category, () => x.catOrder);
     }
-    final order = <String, int>{for (final x in widget.items) x.category: x.catOrder};
-    final cats = counts.keys.toList()..sort((a, b) {
+    final cats = order.keys.toList()..sort((a, b) {
       final d = (order[a] ?? 9999).compareTo(order[b] ?? 9999);
       return d != 0 ? d : a.compareTo(b);
     });
@@ -1846,21 +1894,25 @@ class _SeriesBrowserPageState extends State<SeriesBrowserPage> {
     else { base = widget.items.where((x) => x.category == _sel); }
     final q = _query.toLowerCase();
     final list = base.where((x) => x.name.toLowerCase().contains(q)).toList();
+    if (_az) list.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     return _BrowseLayout(
       entries: [
-        _CatEntry('__all', 'ALL', widget.items.length),
-        _CatEntry('__fav', 'FAVOURITES', widget.items.where(_isFav).length),
-        _CatEntry('__continue', 'CONTINUE WATCHING', continueList.length),
-        _CatEntry('__recent', 'RECENTLY ADDED', math.min(30, widget.items.length)),
-        for (final c in cats) _CatEntry(c, c, counts[c] ?? 0),
+        const _CatEntry('__all', 'ALL'),
+        const _CatEntry('__fav', 'FAVOURITES'),
+        const _CatEntry('__continue', 'CONTINUE WATCHING'),
+        const _CatEntry('__recent', 'RECENTLY ADDED'),
+        for (final c in cats) _CatEntry(c, c),
       ],
-      selected: _sel, hint: 'Search series', menu: widget.menu,
+      selected: _sel, hint: 'Search series',
+      subtitle: '${list.length} shows · tap a show to open',
+      sortAz: _az, defaultSortLabel: 'Newest',
       onSelect: (v) => setState(() => _sel = v),
       onQuery: (v) => setState(() => _query = v),
+      onSort: (v) => setState(() => _az = v),
       body: list.isEmpty
         ? const Center(child: Text('No series here yet'))
         : GridView.builder(
-            padding: const EdgeInsets.fromLTRB(8, 2, 8, 8),
+            padding: const EdgeInsets.fromLTRB(4, 8, 8, 8),
             gridDelegate: _posterGrid(),
             itemCount: list.length, itemBuilder: (_, i) {
               final item = list[i];
@@ -1876,6 +1928,399 @@ class _SeriesBrowserPageState extends State<SeriesBrowserPage> {
             }),
     );
   }
+}
+
+// ================= LIVE TV (categories on the left) =================
+
+class _ChannelCard extends StatelessWidget {
+  final Channel channel;
+  final bool fav;
+  final VoidCallback onTap, onFav;
+  const _ChannelCard({required this.channel, required this.fav,
+    required this.onTap, required this.onFav});
+  @override
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    onLongPress: () {
+      onFav();
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(
+          duration: const Duration(seconds: 1),
+          content: Text(fav ? 'Removed from favourites' : 'Added to favourites')));
+    },
+    borderRadius: BorderRadius.circular(12),
+    child: Container(
+      decoration: _cardDeco(),
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 6),
+      child: Stack(children: [
+        Column(children: [
+          Expanded(child: Center(child: channel.logo.isEmpty
+            ? const Icon(Icons.live_tv_rounded, size: 34, color: Colors.white38)
+            : Image.network(channel.logo, fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) =>
+                  const Icon(Icons.live_tv_rounded, size: 34, color: Colors.white38)))),
+          const SizedBox(height: 4),
+          Text(channel.name, maxLines: 2, overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, height: 1.15)),
+        ]),
+        if (fav) const Positioned(top: 0, right: 0,
+          child: Icon(Icons.star_rounded, size: 16, color: Colors.amber)),
+      ])),
+  );
+}
+
+class LiveBrowserPage extends StatefulWidget {
+  final List<Channel> channels;
+  final Set<String> favorites;
+  final void Function(Channel) onFavorite;
+  final void Function(List<Channel>, int) onPlay;
+  const LiveBrowserPage({super.key, required this.channels, required this.favorites,
+    required this.onFavorite, required this.onPlay});
+  @override
+  State<LiveBrowserPage> createState() => _LiveBrowserPageState();
+}
+class _LiveBrowserPageState extends State<LiveBrowserPage> {
+  String _sel = '__all', _query = '';
+  bool _az = false;
+
+  void _openMulti() {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => MultiViewPage(
+      channels: widget.channels, favorites: widget.favorites)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final groups = <String>[];
+    final seen = <String>{};
+    for (final c in widget.channels) {
+      if (c.group.isNotEmpty && seen.add(c.group)) groups.add(c.group);
+    }
+    Iterable<Channel> base;
+    if (_sel == '__all') { base = widget.channels; }
+    else if (_sel == '__fav') { base = widget.channels.where((c) => widget.favorites.contains(c.id)); }
+    else { base = widget.channels.where((c) => c.group == _sel); }
+    final q = _query.toLowerCase();
+    final list = base.where((c) => c.name.toLowerCase().contains(q)).toList();
+    if (_az) list.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return _BrowseLayout(
+      entries: [
+        const _CatEntry('__all', 'ALL'),
+        const _CatEntry('__fav', 'FAVOURITES'),
+        for (final g in groups) _CatEntry(g, g),
+      ],
+      selected: _sel, hint: 'Search channels',
+      subtitle: '${list.length} channels · tap to play · hold to favourite',
+      sortAz: _az, defaultSortLabel: 'Default',
+      onSelect: (v) => setState(() => _sel = v),
+      onQuery: (v) => setState(() => _query = v),
+      onSort: (v) => setState(() => _az = v),
+      actions: [
+        IconButton(tooltip: 'Multi-screen', onPressed: _openMulti,
+          icon: const Icon(Icons.view_quilt_rounded)),
+      ],
+      body: list.isEmpty
+        ? const Center(child: Text('No channels here yet'))
+        : GridView.builder(
+            padding: const EdgeInsets.fromLTRB(4, 8, 8, 8),
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 130, childAspectRatio: 1.05,
+              crossAxisSpacing: 8, mainAxisSpacing: 8),
+            itemCount: list.length,
+            itemBuilder: (_, i) {
+              final c = list[i];
+              return _ChannelCard(channel: c, fav: widget.favorites.contains(c.id),
+                onTap: () => widget.onPlay(list, i),
+                onFav: () { widget.onFavorite(c); setState(() {}); });
+            }),
+    );
+  }
+}
+
+// ================= MULTI-SCREEN LIVE VIEW =================
+
+class _MvSlot {
+  Channel? channel;
+  VideoPlayerController? c;
+  bool loading = false;
+  String? error;
+}
+
+class _ChannelPicker extends StatefulWidget {
+  final List<Channel> channels;
+  final Set<String> favorites;
+  const _ChannelPicker({required this.channels, required this.favorites});
+  @override
+  State<_ChannelPicker> createState() => _ChannelPickerState();
+}
+class _ChannelPickerState extends State<_ChannelPicker> {
+  String _q = '';
+  bool _onlyFav = false;
+  @override
+  Widget build(BuildContext context) {
+    final h = MediaQuery.of(context).size.height;
+    final q = _q.toLowerCase();
+    final list = widget.channels.where((c) =>
+      (!_onlyFav || widget.favorites.contains(c.id)) &&
+      (c.name.toLowerCase().contains(q) || c.group.toLowerCase().contains(q))).toList();
+    return Dialog(
+      backgroundColor: const Color(0xFF1A1411),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 60, vertical: 12),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: 480, maxHeight: h * .92),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Padding(padding: const EdgeInsets.fromLTRB(14, 8, 8, 0), child: Row(children: [
+            const Expanded(child: Text('Choose a channel',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
+            IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
+          ])),
+          Padding(padding: const EdgeInsets.fromLTRB(14, 0, 14, 6), child: Row(children: [
+            Expanded(child: TextField(
+              decoration: const InputDecoration(prefixIcon: Icon(Icons.search, size: 20),
+                hintText: 'Search channels', isDense: true),
+              onChanged: (v) => setState(() => _q = v))),
+            const SizedBox(width: 8),
+            FilterChip(
+              label: const Text('Favourites'), selected: _onlyFav,
+              onSelected: (v) => setState(() => _onlyFav = v)),
+          ])),
+          Flexible(child: list.isEmpty
+            ? const Padding(padding: EdgeInsets.all(24), child: Text('No channels found'))
+            : ListView.builder(
+                shrinkWrap: true, itemCount: list.length,
+                itemBuilder: (_, i) {
+                  final c = list[i];
+                  return ListTile(
+                    dense: true,
+                    leading: SizedBox(width: 36, height: 28, child: c.logo.isEmpty
+                      ? const Icon(Icons.live_tv_rounded, size: 20)
+                      : Image.network(c.logo, fit: BoxFit.contain,
+                          errorBuilder: (_, __, ___) => const Icon(Icons.live_tv_rounded, size: 20))),
+                    title: Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    subtitle: c.group.isEmpty ? null
+                      : Text(c.group, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    onTap: () => Navigator.pop(context, c));
+                })),
+        ])),
+    );
+  }
+}
+
+class MultiViewPage extends StatefulWidget {
+  final List<Channel> channels;
+  final Set<String> favorites;
+  const MultiViewPage({super.key, required this.channels, required this.favorites});
+  @override
+  State<MultiViewPage> createState() => _MultiViewPageState();
+}
+
+class _MultiViewPageState extends State<MultiViewPage> {
+  static const _brand = Color(0xFFC8742B);
+  final List<_MvSlot> _slots = List<_MvSlot>.generate(4, (_) => _MvSlot());
+  int _count = 2;
+  int _audio = 0;
+  int? _max;
+
+  @override
+  void initState() {
+    super.initState();
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    WakelockPlus.enable();
+  }
+
+  @override
+  void dispose() {
+    for (final s in _slots) { s.c?.dispose(); s.c = null; }
+    WakelockPlus.disable();
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    super.dispose();
+  }
+
+  Future<void> _setChannel(int i, Channel ch) async {
+    final s = _slots[i];
+    final old = s.c;
+    s.channel = ch;
+    s.error = null;
+    s.loading = true;
+    s.c = null;
+    if (mounted) setState(() {});
+    if (old != null) {
+      await WidgetsBinding.instance.endOfFrame;
+      await old.dispose();
+    }
+    if (!mounted) return;
+    final c = VideoPlayerController.networkUrl(Uri.parse(ch.url));
+    s.c = c;
+    try {
+      await c.initialize();
+      if (!mounted || s.c != c) return;
+      await c.setVolume(i == _audio ? 1.0 : 0.0);
+      await c.play();
+      s.loading = false;
+      if (mounted) setState(() {});
+    } catch (_) {
+      if (mounted && s.c == c) setState(() { s.loading = false; s.error = 'Cannot play this channel'; });
+    }
+  }
+
+  Future<void> _clear(int i) async {
+    final s = _slots[i];
+    final old = s.c;
+    s.c = null;
+    s.channel = null;
+    s.loading = false;
+    s.error = null;
+    if (mounted) setState(() {});
+    if (old != null) {
+      await WidgetsBinding.instance.endOfFrame;
+      await old.dispose();
+    }
+  }
+
+  void _selectAudio(int i) {
+    _audio = i;
+    for (var j = 0; j < _slots.length; j++) {
+      _slots[j].c?.setVolume(j == i ? 1.0 : 0.0);
+    }
+    setState(() {});
+  }
+
+  Future<void> _pick(int i) async {
+    final ch = await showDialog<Channel>(context: context,
+      builder: (_) => _ChannelPicker(channels: widget.channels, favorites: widget.favorites));
+    if (ch != null) await _setChannel(i, ch);
+  }
+
+  Future<void> _setCount(int n) async {
+    if (n == _count) return;
+    setState(() { _count = n; _max = null; if (_audio >= n) _audio = 0; });
+    for (var i = n; i < _slots.length; i++) { await _clear(i); }
+    for (var j = 0; j < _slots.length; j++) {
+      _slots[j].c?.setVolume(j == _audio ? 1.0 : 0.0);
+    }
+  }
+
+  Widget _iconBtn(IconData icon, String tip, VoidCallback onTap, {Color color = Colors.white}) =>
+    InkWell(
+      onTap: onTap, borderRadius: BorderRadius.circular(20),
+      child: Padding(padding: const EdgeInsets.all(5),
+        child: Icon(icon, size: 19, color: color)));
+
+  Widget _slotView(int i) {
+    final s = _slots[i];
+    final c = s.c;
+    final active = i == _audio;
+    Widget content;
+    if (s.channel == null) {
+      content = Center(child: InkWell(
+        onTap: () => _pick(i), borderRadius: BorderRadius.circular(14),
+        child: Padding(padding: const EdgeInsets.all(12), child: Column(
+          mainAxisSize: MainAxisSize.min, children: const [
+            Icon(Icons.add_circle_outline_rounded, size: 40, color: Colors.white54),
+            SizedBox(height: 4),
+            Text('Add channel', style: TextStyle(color: Colors.white54, fontSize: 12)),
+          ]))));
+    } else if (c != null && c.value.isInitialized && c.value.size.width > 0) {
+      content = Stack(fit: StackFit.expand, children: [
+        FittedBox(fit: BoxFit.contain,
+          child: SizedBox(width: c.value.size.width, height: c.value.size.height, child: VideoPlayer(c))),
+        ValueListenableBuilder<VideoPlayerValue>(
+          valueListenable: c,
+          builder: (_, v, __) => v.isBuffering
+            ? const Center(child: SizedBox(width: 26, height: 26, child: CircularProgressIndicator(strokeWidth: 2.5)))
+            : const SizedBox.shrink()),
+      ]);
+    } else if (s.error != null) {
+      content = Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Text(s.error!, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+        TextButton(onPressed: () => _setChannel(i, s.channel!), child: const Text('Retry')),
+      ]));
+    } else {
+      content = const Center(child: SizedBox(width: 26, height: 26,
+        child: CircularProgressIndicator(strokeWidth: 2.5)));
+    }
+    return Container(
+      decoration: BoxDecoration(color: Colors.black,
+        border: Border.all(color: active && s.channel != null ? _brand : Colors.white12,
+          width: active && s.channel != null ? 2 : 1)),
+      child: ClipRect(child: Stack(fit: StackFit.expand, children: [
+        content,
+        if (s.channel != null) Positioned.fill(child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: () => _selectAudio(i),
+          child: const SizedBox.expand())),
+        if (s.channel != null) Positioned(top: 0, left: 0, right: 0, child: Container(
+          padding: const EdgeInsets.fromLTRB(8, 2, 4, 10),
+          decoration: BoxDecoration(gradient: LinearGradient(
+            begin: Alignment.topCenter, end: Alignment.bottomCenter,
+            colors: [Colors.black.withOpacity(.8), Colors.transparent])),
+          child: Row(children: [
+            Expanded(child: Text(s.channel!.name, maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600))),
+            _iconBtn(active ? Icons.volume_up_rounded : Icons.volume_off_rounded, 'Sound',
+              () => _selectAudio(i), color: active ? _brand : Colors.white70),
+            _iconBtn(Icons.swap_horiz_rounded, 'Change channel', () => _pick(i)),
+            _iconBtn(_max == i ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded, 'Full',
+              () => setState(() => _max = _max == i ? null : i)),
+            _iconBtn(Icons.close_rounded, 'Remove', () => _clear(i)),
+          ]))),
+      ])),
+    );
+  }
+
+  Widget _layoutBtn(int n) => InkWell(
+    onTap: () => _setCount(n), borderRadius: BorderRadius.circular(8),
+    child: Container(
+      width: 34, height: 28, alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: _count == n ? _brand : Colors.white10,
+        borderRadius: BorderRadius.circular(8)),
+      child: Text('$n', style: const TextStyle(fontWeight: FontWeight.bold))));
+
+  Widget _grid() {
+    if (_max != null) return _slotView(_max!);
+    const gap = SizedBox(width: 3, height: 3);
+    if (_count == 2) {
+      return Row(children: [Expanded(child: _slotView(0)), gap, Expanded(child: _slotView(1))]);
+    }
+    if (_count == 3) {
+      return Row(children: [
+        Expanded(flex: 2, child: _slotView(0)), gap,
+        Expanded(child: Column(children: [
+          Expanded(child: _slotView(1)), gap, Expanded(child: _slotView(2))])),
+      ]);
+    }
+    return Column(children: [
+      Expanded(child: Row(children: [Expanded(child: _slotView(0)), gap, Expanded(child: _slotView(1))])),
+      gap,
+      Expanded(child: Row(children: [Expanded(child: _slotView(2)), gap, Expanded(child: _slotView(3))])),
+    ]);
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: Colors.black,
+    body: SafeArea(child: Column(children: [
+      Container(
+        height: 38, color: const Color(0xFF15100D),
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Row(children: [
+          IconButton(padding: EdgeInsets.zero, onPressed: () => Navigator.maybePop(context),
+            icon: const Icon(Icons.arrow_back, size: 20)),
+          const Text('Multi-screen', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+          const SizedBox(width: 10),
+          const Expanded(child: Text('Tap a screen to hear it',
+            maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 11, color: Colors.white54))),
+          _layoutBtn(2), const SizedBox(width: 6),
+          _layoutBtn(3), const SizedBox(width: 6),
+          _layoutBtn(4), const SizedBox(width: 8),
+        ])),
+      Expanded(child: _grid()),
+    ])),
+  );
 }
 
 String _fmtMs(int ms) {
@@ -2407,6 +2852,55 @@ class _BottomNav extends StatelessWidget {
     ]))));
 }
 
+class _SideRail extends StatelessWidget {
+  final int index;
+  final ValueChanged<int> onTap;
+  final VoidCallback? onRefresh;
+  final Widget menu;
+  const _SideRail({required this.index, required this.onTap,
+    required this.onRefresh, required this.menu});
+  static const _items = <_NavItem>[
+    _NavItem(Icons.home_rounded, 'Home', _gradHome),
+    _NavItem(Icons.live_tv_rounded, 'Live', _gradLive),
+    _NavItem(Icons.movie_filter_rounded, 'Movies', _gradMovies),
+    _NavItem(Icons.video_library_rounded, 'Series', _gradSeries),
+  ];
+  @override
+  Widget build(BuildContext context) => Container(
+    width: 60,
+    decoration: const BoxDecoration(color: Color(0xFF15100D),
+      border: Border(right: BorderSide(color: Colors.white10))),
+    child: Column(children: [
+      const SizedBox(height: 6),
+      for (var i = 0; i < _items.length; i++) InkWell(
+        onTap: () => onTap(i),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 5),
+          child: SizedBox(width: 60, child: Column(mainAxisSize: MainAxisSize.min, children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: 40, height: 30,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                gradient: index == i ? LinearGradient(colors: _items[i].colors) : null,
+                boxShadow: index == i ? [BoxShadow(
+                  color: _items[i].colors.first.withOpacity(.45),
+                  blurRadius: 10, offset: const Offset(0, 3))] : null),
+              child: Icon(_items[i].icon, size: 20,
+                color: index == i ? Colors.white : Colors.white54)),
+            const SizedBox(height: 2),
+            Text(_items[i].label, style: TextStyle(fontSize: 9.5,
+              fontWeight: index == i ? FontWeight.bold : FontWeight.normal,
+              color: index == i ? Colors.white : Colors.white54)),
+          ])))),
+      const Spacer(),
+      IconButton(tooltip: 'Refresh', onPressed: onRefresh,
+        icon: const Icon(Icons.refresh_rounded, size: 22, color: Colors.white60)),
+      menu,
+      const SizedBox(height: 4),
+    ]));
+}
+
 class _ClockText extends StatefulWidget {
   const _ClockText();
   @override
@@ -2464,7 +2958,7 @@ class _HeroBannerState extends State<_HeroBanner> {
     if (widget.items.isEmpty) return const SizedBox.shrink();
     final f = widget.items[_i % widget.items.length];
     final fav = widget.favorites.contains(f.favKey);
-    return SizedBox(height: 214, child: ClipRRect(
+    return SizedBox(height: 176, child: ClipRRect(
       borderRadius: BorderRadius.circular(18),
       child: AnimatedSwitcher(
         duration: const Duration(milliseconds: 500),
@@ -2476,7 +2970,7 @@ class _HeroBannerState extends State<_HeroBanner> {
           Container(decoration: BoxDecoration(gradient: LinearGradient(
             begin: Alignment.centerLeft, end: Alignment.centerRight,
             colors: [Colors.black.withOpacity(.88), Colors.black.withOpacity(.45)]))),
-          Padding(padding: const EdgeInsets.fromLTRB(22, 14, 22, 18), child: Row(children: [
+          Padding(padding: const EdgeInsets.fromLTRB(18, 10, 18, 16), child: Row(children: [
             Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Row(children: [
@@ -2490,25 +2984,25 @@ class _HeroBannerState extends State<_HeroBanner> {
                   Expanded(child: Text(f.sub, maxLines: 1, overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 12, color: Colors.white70))),
                 ]),
-                const SizedBox(height: 8),
+                const SizedBox(height: 5),
                 Text(f.title, maxLines: 2, overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800, height: 1.12)),
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, height: 1.12)),
                 if (f.plot.isNotEmpty) ...[
                   const SizedBox(height: 6),
                   Text(f.plot, maxLines: 2, overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12, height: 1.35, color: Colors.white70)),
+                    style: const TextStyle(fontSize: 11.5, height: 1.3, color: Colors.white70)),
                 ],
-                const SizedBox(height: 12),
+                const SizedBox(height: 8),
                 Row(children: [
                   FilledButton.icon(
                     style: FilledButton.styleFrom(backgroundColor: const Color(0xFFC8742B),
-                      foregroundColor: Colors.white, minimumSize: const Size(0, 40)),
+                      foregroundColor: Colors.white, minimumSize: const Size(0, 34)),
                     onPressed: () => widget.onPlay(f),
                     icon: const Icon(Icons.play_arrow_rounded), label: const Text('Play Now')),
                   const SizedBox(width: 10),
                   OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(foregroundColor: Colors.white,
-                      side: const BorderSide(color: Colors.white38), minimumSize: const Size(0, 40)),
+                      side: const BorderSide(color: Colors.white38), minimumSize: const Size(0, 34)),
                     onPressed: () => widget.onFav(f),
                     icon: Icon(fav ? Icons.favorite : Icons.favorite_border, size: 18,
                       color: fav ? Colors.redAccent : Colors.white),
@@ -2516,7 +3010,7 @@ class _HeroBannerState extends State<_HeroBanner> {
                 ]),
               ])),
             const SizedBox(width: 16),
-            SizedBox(width: 112, child: Container(
+            SizedBox(width: 94, child: Container(
               decoration: BoxDecoration(borderRadius: BorderRadius.circular(10),
                 boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 14, offset: Offset(0, 6))]),
               child: AspectRatio(aspectRatio: 2 / 3, child: Poster(f.poster)))),
@@ -2546,21 +3040,21 @@ class _QuickTile extends StatelessWidget {
   Widget build(BuildContext context) => InkWell(
     onTap: onTap, borderRadius: BorderRadius.circular(16),
     child: Container(
-      height: 74, padding: const EdgeInsets.symmetric(horizontal: 14),
+      height: 56, padding: const EdgeInsets.symmetric(horizontal: 10),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
         gradient: LinearGradient(colors: colors, begin: Alignment.topLeft, end: Alignment.bottomRight),
         boxShadow: [BoxShadow(color: colors.first.withOpacity(.35), blurRadius: 14, offset: const Offset(0, 6))]),
       child: Row(children: [
         Container(
-          width: 44, height: 44,
-          decoration: BoxDecoration(color: Colors.white.withOpacity(.22), borderRadius: BorderRadius.circular(13)),
-          child: Icon(icon, size: 26, color: Colors.white)),
+          width: 34, height: 34,
+          decoration: BoxDecoration(color: Colors.white.withOpacity(.22), borderRadius: BorderRadius.circular(10)),
+          child: Icon(icon, size: 20, color: Colors.white)),
         const SizedBox(width: 12),
         Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-            Text(countText, style: const TextStyle(fontSize: 11.5, color: Colors.white70)),
+            Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
+            Text(countText, style: const TextStyle(fontSize: 10.5, color: Colors.white70)),
           ])),
         const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: Colors.white70),
       ])));
@@ -2572,7 +3066,7 @@ class _ContinueCard extends StatelessWidget {
   const _ContinueCard({required this.title, required this.subtitle,
     required this.poster, required this.onTap});
   @override
-  Widget build(BuildContext context) => SizedBox(width: 196, child: InkWell(
+  Widget build(BuildContext context) => SizedBox(width: 168, child: InkWell(
     onTap: onTap, borderRadius: BorderRadius.circular(14),
     child: ClipRRect(borderRadius: BorderRadius.circular(14), child: Stack(fit: StackFit.expand, children: [
       poster.isEmpty ? Container(color: Colors.white10)
@@ -2690,7 +3184,7 @@ class _PrayerCardState extends State<_PrayerCard> {
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('Next • $nextName  ${_ar[nextName]}',
               style: const TextStyle(fontSize: 11.5, color: Colors.white70)),
-            Text(_t12(nextTime), style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w800, height: 1.1)),
+            Text(_t12(nextTime), style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, height: 1.1)),
           ]),
           const Spacer(),
           Container(
@@ -2768,7 +3262,7 @@ class _MatchesCardState extends State<_MatchesCard> {
     }
   }
 
-  Widget _logo(String url) => SizedBox(width: 30, height: 30, child: url.isEmpty
+  Widget _logo(String url) => SizedBox(width: 26, height: 26, child: url.isEmpty
     ? const Icon(Icons.shield_outlined, size: 24, color: Colors.white38)
     : Image.network(url, fit: BoxFit.contain,
         errorBuilder: (_, __, ___) => const Icon(Icons.shield_outlined, size: 24, color: Colors.white38)));
@@ -3070,21 +3564,21 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _sectionTitle(String t, {String? trailing}) => Padding(
-    padding: const EdgeInsets.only(top: 18, bottom: 8),
+    padding: const EdgeInsets.only(top: 12, bottom: 6),
     child: Row(children: [
       Container(width: 4, height: 18, decoration: BoxDecoration(
         color: const Color(0xFFC8742B), borderRadius: BorderRadius.circular(2))),
       const SizedBox(width: 8),
-      Expanded(child: Text(t, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800))),
+      Expanded(child: Text(t, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800))),
       if (trailing != null) Text(trailing, style: const TextStyle(fontSize: 12, color: Colors.white54)),
     ]));
 
   Widget _posterRow<T>(List<T> items, Widget Function(T) card) => SizedBox(
-    height: 176,
+    height: 150,
     child: ListView.separated(
       scrollDirection: Axis.horizontal, itemCount: items.length,
       separatorBuilder: (_, __) => const SizedBox(width: 10),
-      itemBuilder: (_, i) => SizedBox(width: 118, child: card(items[i]))));
+      itemBuilder: (_, i) => SizedBox(width: 100, child: card(items[i]))));
 
   void _heroPlay(_Feat f) {
     if (f.movie != null) { _playMovie(f.movie!); }
@@ -3110,23 +3604,21 @@ class _HomePageState extends State<HomePage> {
         subtitle: 'Movie • Resume ${_fmtMs(_progress['movie_${m.id}'] ?? 0)}',
         poster: m.poster, onTap: () => _playMovie(m)),
     ];
-    return ListView(padding: const EdgeInsets.fromLTRB(16, 6, 16, 20), children: [
+    return ListView(padding: const EdgeInsets.fromLTRB(12, 4, 12, 14), children: [
       Row(children: [
         ShaderMask(
           shaderCallback: (r) => const LinearGradient(
             colors: [Color(0xFFFFD29A), Color(0xFFC8742B)]).createShader(r),
-          child: const Text('MOKA IPTV', style: TextStyle(fontSize: 23,
+          child: const Text('MOKA IPTV', style: TextStyle(fontSize: 19,
             fontWeight: FontWeight.w900, letterSpacing: 1.3, color: Colors.white))),
         if (_source != null) Padding(padding: const EdgeInsets.only(left: 10, top: 4),
           child: Text(_source!.name, style: const TextStyle(fontSize: 11.5, color: Colors.white54))),
         const Spacer(),
         const _ClockText(),
-        const SizedBox(width: 4),
-        _menuButton(),
       ]),
       const SizedBox(height: 8),
       _HeroBanner(items: _featured(), favorites: _mediaFavs, onPlay: _heroPlay, onFav: _heroFav),
-      const SizedBox(height: 14),
+      const SizedBox(height: 10),
       Row(children: [
         Expanded(child: _QuickTile(label: 'Live TV', countText: '${_channels.length} channels',
           icon: Icons.live_tv_rounded, colors: _gradLive, onTap: () => setState(() => _tab = 1))),
@@ -3137,15 +3629,15 @@ class _HomePageState extends State<HomePage> {
         Expanded(child: _QuickTile(label: 'Series', countText: '${_series.length} shows',
           icon: Icons.video_library_rounded, colors: _gradSeries, onTap: () => setState(() => _tab = 3))),
       ]),
-      const SizedBox(height: 14),
-      const SizedBox(height: 158, child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      const SizedBox(height: 10),
+      const SizedBox(height: 134, child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Expanded(flex: 4, child: _PrayerCard()),
         SizedBox(width: 12),
         Expanded(flex: 6, child: _MatchesCard()),
       ])),
       if (cont.isNotEmpty) ...[
         _sectionTitle('Continue Watching', trailing: '${cont.length}'),
-        SizedBox(height: 112, child: ListView.separated(
+        SizedBox(height: 96, child: ListView.separated(
           scrollDirection: Axis.horizontal, itemCount: cont.length,
           separatorBuilder: (_, __) => const SizedBox(width: 10),
           itemBuilder: (_, i) => cont[i])),
@@ -3164,38 +3656,6 @@ class _HomePageState extends State<HomePage> {
           fav: _mediaFavs.contains('movie_${m.id}'),
           onTap: () => _openMovie(m), onFav: () => _toggleMovieFav(m))),
       ],
-    ]);
-  }
-
-  Widget _liveBody() {
-    final visible = _hideAdult ? _channels.where((c) => !_isAdult(c)).toList() : _channels;
-    final groups = <String>{for (final c in visible) if (c.group.isNotEmpty) c.group}.toList()..sort();
-    final q = _query.toLowerCase();
-    final shown = visible.where((c) {
-      if (_group == _favKey && !_favs.contains(c.id)) return false;
-      if (_group != 'All' && _group != _favKey && c.group != _group) return false;
-      return c.name.toLowerCase().contains(q);
-    }).toList();
-    return Column(children: [
-      SizedBox(height: 45, child: ListView(scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        children: [for (final g in ['All', _favKey, ...groups]) Padding(
-          padding: const EdgeInsets.only(right: 7), child: ChoiceChip(label: Text(g),
-            selected: _group == g, onSelected: (_) => setState(() => _group = g))) ])),
-      Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: TextField(
-        decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search channels', isDense: true),
-        onChanged: (v) => setState(() => _query = v))),
-      Expanded(child: shown.isEmpty ? const Center(child: Text('No channels found'))
-        : ListView.builder(itemCount: shown.length, itemBuilder: (_, i) {
-          final c = shown[i];
-          return ListTile(leading: SizedBox(width: 42, child: c.logo.isEmpty ? const Icon(Icons.tv)
-            : Image.network(c.logo, errorBuilder: (_, __, ___) => const Icon(Icons.tv))),
-            title: Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-            subtitle: c.group.isEmpty ? null : Text(c.group, maxLines: 1),
-            trailing: IconButton(onPressed: () => _toggleChannelFav(c),
-              icon: Icon(_favs.contains(c.id) ? Icons.star : Icons.star_border), color: Colors.amber),
-            onTap: () => _playChannel(shown, i));
-        })),
     ]);
   }
 
@@ -3218,29 +3678,27 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     if (!_ready) return const Scaffold(body: Center(child: CircularProgressIndicator()));
     if (_source == null) return LoginPage(onLogin: _login);
+    final visibleChannels = _hideAdult ? _channels.where((c) => !_isAdult(c)).toList() : _channels;
     final pages = <Widget>[
       _homeBody(),
-      _liveBody(),
+      LiveBrowserPage(channels: visibleChannels, favorites: _favs,
+        onFavorite: _toggleChannelFav, onPlay: _playChannel),
       MediaGridPage(title: 'Movies', items: _movies, favorites: _mediaFavs,
-        progress: _progress, menu: _menuButton(),
-        onFavorite: _toggleMovieFav, onPlay: _openMovie),
+        progress: _progress, onFavorite: _toggleMovieFav, onPlay: _openMovie),
       SeriesBrowserPage(items: _series, source: _source!, favorites: _mediaFavs,
-        menu: _menuButton(), watchTick: _watchTick, onFavorite: _toggleSeriesFav),
+        watchTick: _watchTick, onFavorite: _toggleSeriesFav),
     ];
     return Scaffold(
-      appBar: _tab != 1 ? null : AppBar(toolbarHeight: 46, title: const Text('MOKA IPTV', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 19)),
-        actions: [
-          IconButton(tooltip: 'Account details', onPressed: _openAccount, icon: const Icon(Icons.account_circle)),
-          IconButton(tooltip: 'Settings', onPressed: _openSettings, icon: const Icon(Icons.settings)),
-          IconButton(tooltip: 'Logout', onPressed: _logout, icon: const Icon(Icons.logout)),
-          IconButton(tooltip: 'Refresh', onPressed: _loading ? null : () => _connect(_source!), icon: const Icon(Icons.refresh)),
-        ]),
-      body: SafeArea(bottom: false, child: Column(children: [
-        if (_loading) const LinearProgressIndicator(),
-        if (_error != null) Padding(padding: const EdgeInsets.all(8), child: Text(_error!, style: const TextStyle(color: Colors.redAccent))),
-        Expanded(child: IndexedStack(index: _tab, children: pages)),
+      body: SafeArea(bottom: false, child: Row(children: [
+        _SideRail(index: _tab, onTap: (i) => setState(() => _tab = i),
+          onRefresh: _loading ? null : () => _connect(_source!), menu: _menuButton()),
+        Expanded(child: Column(children: [
+          if (_loading) const LinearProgressIndicator(minHeight: 2),
+          if (_error != null) Padding(padding: const EdgeInsets.all(8),
+            child: Text(_error!, style: const TextStyle(color: Colors.redAccent))),
+          Expanded(child: IndexedStack(index: _tab, children: pages)),
+        ])),
       ])),
-      bottomNavigationBar: _BottomNav(index: _tab, onTap: (i) => setState(() => _tab = i)),
     );
   }
 }
