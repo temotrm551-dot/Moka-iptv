@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Directory, File;
 import 'dart:math' as math;
 import 'dart:ui' show FontFeature, ImageFilter;
 import 'package:flutter/material.dart';
@@ -337,14 +338,17 @@ const _matchLeagues = <String, String>{
 
 Future<List<MatchItem>> loadMatches(DateTime now) async {
   String ymd(DateTime d) => '${d.year}${_p2(d.month)}${_p2(d.day)}';
-  final range = '${ymd(now.subtract(const Duration(days: 1)))}-${ymd(now.add(const Duration(days: 1)))}';
-  var failed = 0;
-  final lists = await Future.wait(_matchLeagues.entries.map((e) async {
+  final days = <DateTime>[now.subtract(const Duration(days: 1)), now];
+  if (now.timeZoneOffset.isNegative) days.add(now.add(const Duration(days: 1)));
+  var failed = 0, total = 0;
+  String? reason;
+
+  Future<List<MatchItem>> one(String slug, String leagueName, DateTime day) async {
     final out = <MatchItem>[];
     try {
-      final uri = Uri.parse('https://site.api.espn.com/apis/site/v2/sports/soccer/${e.key}/scoreboard?dates=$range');
+      final uri = Uri.parse('https://site.api.espn.com/apis/site/v2/sports/soccer/$slug/scoreboard?dates=${ymd(day)}');
       final r = await http.get(uri).timeout(const Duration(seconds: 10));
-      if (r.statusCode != 200) { failed++; return out; }
+      if (r.statusCode != 200) { failed++; reason ??= 'HTTP ${r.statusCode}'; return out; }
       final j = jsonDecode(r.body);
       final events = j is Map ? j['events'] : null;
       if (events is List) {
@@ -358,7 +362,7 @@ Future<List<MatchItem>> loadMatches(DateTime now) async {
             final t = DateTime.parse('${ev['date']}').toLocal();
             if (t.year != now.year || t.month != now.month || t.day != now.day) continue;
             out.add(MatchItem(
-              league: e.value,
+              league: leagueName,
               home: _s(home['team']?['shortDisplayName'] ?? home['team']?['displayName']),
               away: _s(away['team']?['shortDisplayName'] ?? away['team']?['displayName']),
               homeLogo: _s(home['team']?['logo']), awayLogo: _s(away['team']?['logo']),
@@ -367,13 +371,229 @@ Future<List<MatchItem>> loadMatches(DateTime now) async {
           } catch (_) {}
         }
       }
-    } catch (_) { failed++; }
+    } catch (e) {
+      failed++;
+      reason ??= '$e';
+    }
     return out;
-  }));
-  if (failed == _matchLeagues.length) throw 'matches unavailable';
-  final all = <MatchItem>[for (final l in lists) ...l];
+  }
+
+  final futures = <Future<List<MatchItem>>>[];
+  for (final e in _matchLeagues.entries) {
+    for (final day in days) {
+      total++;
+      futures.add(one(e.key, e.value, day));
+    }
+  }
+  final lists = await Future.wait(futures);
+  final seen = <String>{};
+  final all = <MatchItem>[];
+  for (final l in lists) {
+    for (final m in l) {
+      if (seen.add('${m.league}|${m.home}|${m.away}|${m.time.millisecondsSinceEpoch}')) all.add(m);
+    }
+  }
   all.sort((a, b) => a.time.compareTo(b.time));
+  if (all.isEmpty) {
+    try {
+      final alt = await _loadMatchesAlt(now);
+      if (alt.isNotEmpty) return alt;
+    } catch (e) {
+      reason ??= '$e';
+    }
+    if (failed >= total) throw (reason ?? 'no connection');
+  }
   return all;
+}
+
+Future<List<MatchItem>> _loadMatchesAlt(DateTime now) async {
+  final d = '${now.year}-${_p2(now.month)}-${_p2(now.day)}';
+  final r = await http.get(Uri.parse(
+    'https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=$d&s=Soccer')).timeout(const Duration(seconds: 12));
+  if (r.statusCode != 200) throw 'HTTP ${r.statusCode}';
+  final j = jsonDecode(r.body);
+  final events = j is Map ? j['events'] : null;
+  final out = <MatchItem>[];
+  if (events is! List) return out;
+  const allow = ['english premier league', 'spanish la liga', 'italian serie a', 'german bundesliga',
+    'french ligue 1', 'uefa champions', 'uefa europa', 'egyptian', 'saudi', 'caf ', 'fa cup',
+    'copa del rey', 'efl cup', 'carabao', 'coppa italia', 'world cup', 'nations league',
+    'africa cup', 'afc champions'];
+  for (final e in events) {
+    try {
+      final league = _s(e['strLeague']);
+      final lc = league.toLowerCase();
+      if (!allow.any((k) => lc.contains(k))) continue;
+      var ts = _s(e['strTimestamp']);
+      if (ts.isEmpty) ts = '${_s(e['dateEvent'])}T${_s(e['strTime'])}';
+      if (!ts.endsWith('Z') && !ts.contains('+')) ts = '${ts}Z';
+      final t = DateTime.parse(ts).toLocal();
+      if (t.year != now.year || t.month != now.month || t.day != now.day) continue;
+      final status = _s(e['strStatus']).toLowerCase();
+      var state = 'pre';
+      if (status.contains('finish') || status == 'ft' || status.contains('after')) {
+        state = 'post';
+      } else if (e['intHomeScore'] != null && status.isNotEmpty && status != 'ns' &&
+          !status.contains('not started') && !status.contains('postponed')) {
+        state = 'in';
+      }
+      out.add(MatchItem(league: league, home: _s(e['strHomeTeam']), away: _s(e['strAwayTeam']),
+        homeLogo: _s(e['strHomeTeamBadge']), awayLogo: _s(e['strAwayTeamBadge']),
+        homeScore: _s(e['intHomeScore']), awayScore: _s(e['intAwayScore']),
+        state: state, detail: _s(e['strProgress']), time: t));
+    } catch (_) {}
+  }
+  out.sort((a, b) => a.time.compareTo(b.time));
+  return out;
+}
+
+// ---- offline prayer times (used when the online service can't be reached) ----
+
+const _cityCoords = <String, List<double>>{
+  'cairo': [30.0444, 31.2357], 'giza': [30.0131, 31.2089], 'alexandria': [31.2001, 29.9187],
+  'mansoura': [31.0409, 31.3785], 'tanta': [30.7865, 31.0004], 'zagazig': [30.5877, 31.5020],
+  'ismailia': [30.5965, 32.2715], 'port said': [31.2653, 32.3019], 'suez': [29.9668, 32.5498],
+  'fayoum': [29.3084, 30.8428], 'beni suef': [29.0661, 31.0994], 'minya': [28.1099, 30.7503],
+  'asyut': [27.1809, 31.1837], 'sohag': [26.5591, 31.6948], 'qena': [26.1551, 32.7160],
+  'luxor': [25.6872, 32.6396], 'aswan': [24.0889, 32.8998], 'hurghada': [27.2579, 33.8116],
+  'sharm el sheikh': [27.9158, 34.3300], 'mecca': [21.3891, 39.8579], 'medina': [24.5247, 39.5692],
+  'riyadh': [24.7136, 46.6753], 'jeddah': [21.4858, 39.1925], 'dubai': [25.2048, 55.2708],
+  'abu dhabi': [24.4539, 54.3773], 'kuwait': [29.3759, 47.9774], 'doha': [25.2854, 51.5310],
+  'amman': [31.9454, 35.9284], 'beirut': [33.8938, 35.5018], 'baghdad': [33.3152, 44.3661],
+  'tripoli': [32.8872, 13.1913], 'tunis': [36.8065, 10.1815], 'algiers': [36.7538, 3.0588],
+  'casablanca': [33.5731, -7.5898], 'khartoum': [15.5007, 32.5599],
+};
+
+Map<String, DateTime> calcPrayerTimes(double lat, double lng, DateTime day) {
+  double rad(double x) => x * math.pi / 180;
+  double deg(double x) => x * 180 / math.pi;
+  double fixAngle(double x) => x - 360 * (x / 360).floorToDouble();
+  double fixHour(double x) => x - 24 * (x / 24).floorToDouble();
+  final tz = DateTime(day.year, day.month, day.day, 12).timeZoneOffset.inMinutes / 60.0;
+  var yy = day.year, mm = day.month;
+  if (mm <= 2) { yy -= 1; mm += 12; }
+  final ca = (yy / 100).floor();
+  final cb = 2 - ca + (ca / 4).floor();
+  final jd = (365.25 * (yy + 4716)).floor() + (30.6001 * (mm + 1)).floor() + day.day + cb - 1524.5 - lng / 360.0;
+  final dd = jd + 0.5 - 2451545.0;
+  final g = fixAngle(357.529 + 0.98560028 * dd);
+  final q = fixAngle(280.459 + 0.98564736 * dd);
+  final sunLon = fixAngle(q + 1.915 * math.sin(rad(g)) + 0.020 * math.sin(rad(2 * g)));
+  final tilt = 23.439 - 0.00000036 * dd;
+  final ra = deg(math.atan2(math.cos(rad(tilt)) * math.sin(rad(sunLon)), math.cos(rad(sunLon)))) / 15.0;
+  final eqt = q / 15.0 - fixHour(ra);
+  final decl = deg(math.asin(math.sin(rad(tilt)) * math.sin(rad(sunLon))));
+  final noon = fixHour(12 - eqt);
+  double angleTime(double angle, bool ccw) {
+    final x = (-math.sin(rad(angle)) - math.sin(rad(decl)) * math.sin(rad(lat))) /
+        (math.cos(rad(decl)) * math.cos(rad(lat)));
+    final t = deg(math.acos(x.clamp(-1.0, 1.0).toDouble())) / 15.0;
+    return noon + (ccw ? -t : t);
+  }
+  double asrTime() {
+    final angle = -deg(math.atan(1 / (1 + math.tan(rad((lat - decl).abs())))));
+    final x = (math.sin(rad(angle)) - math.sin(rad(decl)) * math.sin(rad(lat))) /
+        (math.cos(rad(decl)) * math.cos(rad(lat)));
+    final t = deg(math.acos(x.clamp(-1.0, 1.0).toDouble())) / 15.0;
+    return noon + t;
+  }
+  DateTime at(double h) {
+    final local = fixHour(h + tz - lng / 15.0);
+    return DateTime(day.year, day.month, day.day).add(Duration(seconds: (local * 3600).round()));
+  }
+  return {
+    'Fajr': at(angleTime(19.5, true)),
+    'Dhuhr': at(noon),
+    'Asr': at(asrTime()),
+    'Maghrib': at(angleTime(0.833, false)),
+    'Isha': at(angleTime(17.5, false)),
+  };
+}
+
+// ---- local cache so the app opens instantly ----
+
+int _hash(String s) {
+  var h = 7;
+  for (final u in s.codeUnits) { h = (h * 31 + u) & 0x7fffffff; }
+  return h;
+}
+
+File _cacheFile(Source s) =>
+    File('${Directory.systemTemp.path}/moka_cache_${_hash(s.url)}_${_hash(s.user)}.json');
+
+class _CacheData {
+  final List<Channel> channels;
+  final List<MediaItem> movies;
+  final List<SeriesItem> series;
+  final DateTime time;
+  const _CacheData(this.channels, this.movies, this.series, this.time);
+}
+
+Future<void> writeCache(Source s, List<Channel> ch, List<MediaItem> mv, List<SeriesItem> se) async {
+  try {
+    final data = <String, dynamic>{
+      'v': 1,
+      't': DateTime.now().millisecondsSinceEpoch,
+      'ch': [for (final c in ch) [c.name, c.url, c.group, c.logo, c.streamId]],
+      'mv': [for (final m in mv) [m.id, m.name, m.category, m.poster, m.url, m.type, m.catOrder]],
+      'se': [for (final x in se) [x.id, x.name, x.category, x.poster, x.plot, x.catOrder]],
+    };
+    await _cacheFile(s).writeAsString(jsonEncode(data));
+  } catch (_) {}
+}
+
+Future<_CacheData?> readCache(Source s) async {
+  try {
+    final f = _cacheFile(s);
+    if (!await f.exists()) return null;
+    final j = jsonDecode(await f.readAsString());
+    if (j is! Map || j['v'] != 1) return null;
+    final ch = <Channel>[
+      for (final r in (j['ch'] as List))
+        Channel('${r[0]}', '${r[1]}', '${r[2]}', '${r[3]}', streamId: '${r[4]}')];
+    final mv = <MediaItem>[
+      for (final r in (j['mv'] as List))
+        MediaItem(id: '${r[0]}', name: '${r[1]}', category: '${r[2]}', poster: '${r[3]}',
+          url: '${r[4]}', type: '${r[5]}', catOrder: (r[6] as num).toInt())];
+    final se = <SeriesItem>[
+      for (final r in (j['se'] as List))
+        SeriesItem(id: '${r[0]}', name: '${r[1]}', category: '${r[2]}', poster: '${r[3]}',
+          plot: '${r[4]}', catOrder: (r[5] as num).toInt())];
+    return _CacheData(ch, mv, se, DateTime.fromMillisecondsSinceEpoch((j['t'] as num).toInt()));
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<void> deleteCache(Source s) async {
+  try {
+    final f = _cacheFile(s);
+    if (await f.exists()) await f.delete();
+  } catch (_) {}
+}
+
+// ---- movie details ----
+
+class MovieInfo {
+  final String plot, genre, releaseDate, director, cast, backdrop, duration;
+  final double rating; // out of 5
+  const MovieInfo({this.plot = '', this.genre = '', this.releaseDate = '', this.director = '',
+    this.cast = '', this.backdrop = '', this.duration = '', this.rating = 0});
+}
+
+Future<MovieInfo> loadMovieInfo(Source s, String id) async {
+  final d = await _getJson('${_api(s)}&action=get_vod_info&vod_id=$id');
+  String str(dynamic v) { final t = '${v ?? ''}'.trim(); return t == 'null' ? '' : t; }
+  final Map info = d is Map && d['info'] is Map ? d['info'] as Map : const {};
+  final bd = info['backdrop_path'];
+  final backdrop = bd is List ? (bd.isNotEmpty ? str(bd.first) : '') : str(bd);
+  var rating = double.tryParse(str(info['rating_5based'])) ?? 0;
+  if (rating <= 0) rating = (double.tryParse(str(info['rating'])) ?? 0) / 2;
+  return MovieInfo(
+    plot: str(info['plot'] ?? info['description']), genre: str(info['genre']),
+    releaseDate: str(info['releasedate'] ?? info['release_date'] ?? info['releaseDate']),
+    director: str(info['director']), cast: str(info['cast'] ?? info['actors']),
+    backdrop: backdrop, duration: str(info['duration']), rating: rating);
 }
 
 // ================= LOCAL STORAGE =================
@@ -1942,6 +2162,174 @@ class MokaApp extends StatelessWidget {
   );
 }
 
+class MovieDetailsPage extends StatefulWidget {
+  final MediaItem movie;
+  final Source source;
+  final Set<String> favorites;
+  final List<QualityOption> qualities;
+  final void Function(MediaItem) onFavorite;
+  const MovieDetailsPage({super.key, required this.movie, required this.source,
+    required this.favorites, required this.onFavorite,
+    this.qualities = const <QualityOption>[]});
+  @override
+  State<MovieDetailsPage> createState() => _MovieDetailsPageState();
+}
+
+class _MovieDetailsPageState extends State<MovieDetailsPage> {
+  static const _brand = Color(0xFFC8742B);
+  MovieInfo? _info;
+  bool _loading = true;
+  int _ms = 0;
+  late String _url = widget.movie.url;
+  String _q = '';
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.qualities.isNotEmpty) {
+      _q = widget.qualities.firstWhere((x) => x.url == widget.movie.url,
+        orElse: () => widget.qualities.first).label;
+      _url = widget.qualities.firstWhere((x) => x.label == _q).url;
+    }
+    _load();
+  }
+
+  Future<void> _load() async {
+    final ms = await Store.progress('movie_${widget.movie.id}');
+    if (mounted) setState(() => _ms = ms);
+    try {
+      final info = await loadMovieInfo(widget.source, widget.movie.id);
+      if (mounted) setState(() { _info = info; _loading = false; });
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _play({bool fromStart = false}) async {
+    final key = 'movie_${widget.movie.id}';
+    if (fromStart) await Store.saveProgress(key, 0);
+    if (!mounted) return;
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => MediaPlayerPage(
+      name: widget.movie.name, url: _url, id: key, qualities: widget.qualities)));
+    final ms = await Store.progress(key);
+    if (mounted) setState(() => _ms = ms);
+  }
+
+  Widget _chip(String t, {IconData? icon}) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+    decoration: BoxDecoration(color: Colors.white12, borderRadius: BorderRadius.circular(20)),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      if (icon != null) ...[Icon(icon, size: 13, color: Colors.amber), const SizedBox(width: 3)],
+      Text(t, style: const TextStyle(fontSize: 11.5)),
+    ]));
+
+  @override
+  Widget build(BuildContext context) {
+    final m = widget.movie;
+    final info = _info;
+    final fav = widget.favorites.contains('movie_${m.id}');
+    final plot = info?.plot ?? '';
+    final bg = (info?.backdrop.isNotEmpty ?? false) ? info!.backdrop : m.poster;
+    final meta = <Widget>[
+      if ((info?.releaseDate ?? '').isNotEmpty) _chip(info!.releaseDate, icon: Icons.calendar_today),
+      if ((info?.genre ?? '').isNotEmpty) _chip(info!.genre),
+      if ((info?.duration ?? '').isNotEmpty) _chip(info!.duration, icon: Icons.schedule),
+      if ((info?.rating ?? 0) > 0) _chip(info!.rating.toStringAsFixed(1), icon: Icons.star),
+    ];
+    return Scaffold(
+      backgroundColor: const Color(0xFF110D0B),
+      body: Stack(children: [
+        Positioned.fill(child: Stack(fit: StackFit.expand, children: [
+          if (bg.isNotEmpty) ClipRect(child: ImageFiltered(
+            imageFilter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+            child: Image.network(bg, fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => const SizedBox.shrink()))),
+          Container(decoration: BoxDecoration(gradient: LinearGradient(
+            begin: Alignment.topCenter, end: Alignment.bottomCenter,
+            colors: [Colors.black.withOpacity(.55), Colors.black.withOpacity(.93)]))),
+        ])),
+        SafeArea(child: ListView(padding: const EdgeInsets.fromLTRB(8, 0, 16, 16), children: [
+          Row(children: [
+            IconButton(tooltip: 'Back', onPressed: () => Navigator.maybePop(context),
+              icon: const Icon(Icons.arrow_back)),
+            Expanded(child: Text(_baseTitle(m.name), maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold))),
+          ]),
+          const SizedBox(height: 4),
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const SizedBox(width: 8),
+            Container(
+              width: 140,
+              decoration: BoxDecoration(borderRadius: BorderRadius.circular(8),
+                boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 14, offset: Offset(0, 6))]),
+              child: AspectRatio(aspectRatio: 2 / 3, child: Poster(m.poster))),
+            const SizedBox(width: 18),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              if (meta.isNotEmpty) Wrap(spacing: 6, runSpacing: 6, children: meta),
+              if ((info?.director ?? '').isNotEmpty) Padding(padding: const EdgeInsets.only(top: 8),
+                child: Text('Directed by: ${info!.director}', maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12, color: Colors.white60))),
+              if ((info?.cast ?? '').isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4),
+                child: Text('Cast: ${info!.cast}', maxLines: 2, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12, color: Colors.white60))),
+              if (_loading) const Padding(padding: EdgeInsets.only(top: 12),
+                child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)))
+              else if (plot.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Text(plot, maxLines: 4, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12.5, height: 1.45, color: Colors.white70)),
+                if (plot.length > 200) InkWell(
+                  onTap: () => showDialog<void>(context: context, builder: (_) => AlertDialog(
+                    title: Text(_baseTitle(m.name)),
+                    content: SingleChildScrollView(child: Text(plot)),
+                    actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))])),
+                  child: const Padding(padding: EdgeInsets.symmetric(vertical: 3),
+                    child: Text('Read more', style: TextStyle(
+                      color: _brand, fontSize: 12.5, fontWeight: FontWeight.bold)))),
+              ],
+              const SizedBox(height: 14),
+              Wrap(spacing: 10, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
+                FilledButton.icon(
+                  style: FilledButton.styleFrom(backgroundColor: _brand,
+                    foregroundColor: Colors.white, minimumSize: const Size(0, 44)),
+                  onPressed: () => _play(),
+                  icon: const Icon(Icons.play_arrow_rounded),
+                  label: Text(_ms > 0 ? 'Resume  ${_fmtMs(_ms)}' : 'Play')),
+                if (_ms > 0) OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(foregroundColor: Colors.white,
+                    side: const BorderSide(color: Colors.white38), minimumSize: const Size(0, 44)),
+                  onPressed: () => _play(fromStart: true),
+                  icon: const Icon(Icons.replay_rounded, size: 18), label: const Text('Start over')),
+                if (widget.qualities.length > 1) PopupMenuButton<QualityOption>(
+                  onSelected: (v) => setState(() { _q = v.label; _url = v.url; }),
+                  itemBuilder: (_) => [for (final x in widget.qualities)
+                    PopupMenuItem<QualityOption>(value: x, child: Text(x.label))],
+                  child: Container(
+                    height: 44, padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(color: Colors.white10,
+                      borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.white24)),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      const Icon(Icons.high_quality_rounded, size: 18),
+                      const SizedBox(width: 6),
+                      Text(_q),
+                      const SizedBox(width: 4),
+                      const Icon(Icons.keyboard_arrow_down),
+                    ]))),
+                IconButton(
+                  tooltip: fav ? 'Remove from favourites' : 'Add to favourites',
+                  style: IconButton.styleFrom(backgroundColor: Colors.white10),
+                  onPressed: () { widget.onFavorite(m); setState(() {}); },
+                  icon: Icon(fav ? Icons.favorite : Icons.favorite_border,
+                    color: fav ? Colors.redAccent : Colors.white)),
+              ]),
+            ])),
+          ]),
+        ])),
+      ]),
+    );
+  }
+}
+
 // ---------- shared helpers for the home screen ----------
 
 const _gradHome = <Color>[Color(0xFFC8742B), Color(0xFFF2A65A)];
@@ -2041,8 +2429,8 @@ class _ClockTextState extends State<_ClockText> {
     const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
-      Text('${_p2(_now.hour)}:${_p2(_now.minute)}',
-        style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w700, height: 1.05)),
+      Text(_t12(_now),
+        style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700, height: 1.05)),
       Text('${days[_now.weekday - 1]}, ${_now.day} ${months[_now.month - 1]}',
         style: const TextStyle(fontSize: 11, color: Colors.white60)),
     ]);
@@ -2216,6 +2604,7 @@ class _PrayerCardState extends State<_PrayerCard> {
   String _city = 'Cairo', _country = 'Egypt';
   bool _failed = false;
   int _loadedDay = -1;
+  bool _approx = false;
   DateTime _now = DateTime.now();
   Timer? _tick;
 
@@ -2239,9 +2628,18 @@ class _PrayerCardState extends State<_PrayerCard> {
     try {
       final t = await loadPrayerTimes(_city, _country, DateTime.now());
       _loadedDay = DateTime.now().day;
+      _approx = false;
       if (mounted) setState(() { _t = t; _failed = false; });
     } catch (_) {
-      if (mounted) setState(() => _failed = true);
+      final c = _cityCoords[_city.trim().toLowerCase()];
+      if (c != null) {
+        _loadedDay = DateTime.now().day;
+        _approx = true;
+        final t = calcPrayerTimes(c[0], c[1], DateTime.now());
+        if (mounted) setState(() { _t = t; _failed = false; });
+      } else if (mounted) {
+        setState(() => _failed = true);
+      }
     }
   }
 
@@ -2329,7 +2727,7 @@ class _PrayerCardState extends State<_PrayerCard> {
           InkWell(onTap: _editPlace, borderRadius: BorderRadius.circular(8), child: Padding(
             padding: const EdgeInsets.all(2),
             child: Row(children: [
-              Text(_city, style: const TextStyle(fontSize: 11, color: Colors.white60)),
+              Text(_approx ? '$_city • offline' : _city, style: const TextStyle(fontSize: 11, color: Colors.white60)),
               const SizedBox(width: 3),
               const Icon(Icons.edit_location_alt_rounded, size: 14, color: Colors.white54),
             ]))),
@@ -2347,6 +2745,7 @@ class _MatchesCard extends StatefulWidget {
 class _MatchesCardState extends State<_MatchesCard> {
   List<MatchItem>? _m;
   bool _failed = false;
+  String _err = '';
   Timer? _t;
 
   @override
@@ -2362,8 +2761,10 @@ class _MatchesCardState extends State<_MatchesCard> {
     try {
       final m = await loadMatches(DateTime.now());
       if (mounted) setState(() { _m = m; _failed = false; });
-    } catch (_) {
-      if (mounted && _m == null) setState(() => _failed = true);
+    } catch (e) {
+      var msg = '$e'.replaceFirst('Exception: ', '');
+      if (msg.length > 70) msg = msg.substring(0, 70);
+      if (mounted && _m == null) setState(() { _failed = true; _err = msg; });
     }
   }
 
@@ -2376,7 +2777,7 @@ class _MatchesCardState extends State<_MatchesCard> {
     final live = x.state == 'in';
     final done = x.state == 'post';
     final center = (live || done) ? '${x.homeScore} - ${x.awayScore}'
-        : '${_p2(x.time.hour)}:${_p2(x.time.minute)}';
+        : _t12(x.time, ampm: false);
     return Container(
       width: 178, margin: const EdgeInsets.only(right: 10),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
@@ -2396,7 +2797,7 @@ class _MatchesCardState extends State<_MatchesCard> {
           Column(mainAxisSize: MainAxisSize.min, children: [
             Text(center, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
             const SizedBox(height: 2),
-            Text(live ? 'LIVE ${x.detail}' : (done ? 'FT' : 'Kick-off'),
+            Text(live ? 'LIVE ${x.detail}' : (done ? 'FT' : (x.time.hour < 12 ? 'AM' : 'PM')),
               style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold,
                 color: live ? Colors.redAccent : Colors.white54)),
           ]),
@@ -2417,7 +2818,7 @@ class _MatchesCardState extends State<_MatchesCard> {
     if (m == null) {
       body = Center(child: _failed
         ? TextButton.icon(onPressed: () { setState(() => _failed = false); _load(); },
-            icon: const Icon(Icons.refresh, size: 18), label: const Text('Couldn’t load matches — tap to retry'))
+            icon: const Icon(Icons.refresh, size: 18), label: Text('Couldn’t load matches ($_err)\nTap to retry', textAlign: TextAlign.center, style: const TextStyle(fontSize: 11.5)))
         : const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5)));
     } else if (m.isEmpty) {
       body = const Center(child: Text('No major matches today', style: TextStyle(color: Colors.white60)));
@@ -2472,15 +2873,32 @@ class _HomePageState extends State<HomePage> {
     final saved = await Store.sources();
     if (saved.isNotEmpty) {
       final i = await Store.active();
-      await _connect(saved[i.clamp(0, saved.length - 1).toInt()], restore: true);
+      final src = saved[i.clamp(0, saved.length - 1).toInt()];
+      final cached = await readCache(src);
+      if (cached != null) {
+        // Show the last known lists immediately, refresh quietly in the background.
+        _source = src;
+        _channels = cached.channels;
+        _movies = cached.movies;
+        _series = cached.series;
+        if (mounted) setState(() => _ready = true);
+        _refreshProgress();
+        if (DateTime.now().difference(cached.time) > const Duration(minutes: 30)) {
+          _connect(src, restore: true, background: true);
+        }
+        return;
+      }
+      await _connect(src, restore: true);
     } else if (mounted) setState(() => _ready = true);
   }
 
   Future<void> _refreshProgress() async {
+    final prefs = await Store.p;
     final values = <String, int>{};
-    for (final m in _movies) {
-      final value = await Store.progress('movie_${m.id}');
-      if (value > 0) values['movie_${m.id}'] = value;
+    for (final k in prefs.getKeys()) {
+      if (!k.startsWith('progress_movie_')) continue;
+      final v = prefs.getInt(k) ?? 0;
+      if (v > 0) values[k.substring(9)] = v;
     }
     final ids = await Store.watchingSeries();
     final byId = <String, SeriesItem>{for (final s in _series) s.id: s};
@@ -2496,8 +2914,8 @@ class _HomePageState extends State<HomePage> {
     if (mounted) setState(() { _progress = values; _watching = watching; _seriesMs = ms; _watchTick++; });
   }
 
-  Future<void> _connect(Source source, {bool restore = false}) async {
-    if (mounted) setState(() { _loading = true; _error = null; });
+  Future<void> _connect(Source source, {bool restore = false, bool background = false}) async {
+    if (mounted) setState(() { _loading = true; if (!background) _error = null; });
     try {
       final live = await loadChannels(source);
       List<MediaItem> movies = [];
@@ -2509,11 +2927,12 @@ class _HomePageState extends State<HomePage> {
       await Store.saveSources([source]);
       await Store.saveActive(0);
       _source = source; _channels = live; _movies = movies; _series = series;
-      _group = 'All'; _query = '';
-      if (mounted) setState(() { _loading = false; _ready = true; _tab = 0; });
+      if (!background) { _group = 'All'; _query = ''; }
+      if (mounted) setState(() { _loading = false; _ready = true; if (!background) _tab = 0; });
+      writeCache(source, live, movies, series);
       await _refreshProgress();
     } catch (e) {
-      if (mounted) setState(() { _loading = false; _ready = true; _error = '$e'; });
+      if (mounted) setState(() { _loading = false; _ready = true; if (!background) _error = '$e'; });
       if (!restore) rethrow;
     }
   }
@@ -2561,6 +2980,14 @@ class _HomePageState extends State<HomePage> {
       name: m.name, url: m.url, id: 'movie_${m.id}', qualities: _qualitiesFor(m))));
     await _refreshProgress();
   }
+  Future<void> _openMovie(MediaItem m) async {
+    final src = _source;
+    if (src == null) return;
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => MovieDetailsPage(
+      movie: m, source: src, favorites: _mediaFavs, qualities: _qualitiesFor(m),
+      onFavorite: _toggleMovieFav)));
+    await _refreshProgress();
+  }
   Future<void> _openSeries(SeriesItem s) async {
     final src = _source;
     if (src == null) return;
@@ -2587,6 +3014,8 @@ class _HomePageState extends State<HomePage> {
       ],
     ));
     if (ok != true) return;
+    final old = _source;
+    if (old != null) await deleteCache(old);
     await Store.logout();
     if (!mounted) return;
     setState(() {
@@ -2733,7 +3162,7 @@ class _HomePageState extends State<HomePage> {
         _posterRow<MediaItem>(latestMovies, (m) => _PosterCard(
           name: m.name, poster: m.poster,
           fav: _mediaFavs.contains('movie_${m.id}'),
-          onTap: () => _playMovie(m), onFav: () => _toggleMovieFav(m))),
+          onTap: () => _openMovie(m), onFav: () => _toggleMovieFav(m))),
       ],
     ]);
   }
@@ -2794,7 +3223,7 @@ class _HomePageState extends State<HomePage> {
       _liveBody(),
       MediaGridPage(title: 'Movies', items: _movies, favorites: _mediaFavs,
         progress: _progress, menu: _menuButton(),
-        onFavorite: _toggleMovieFav, onPlay: _playMovie),
+        onFavorite: _toggleMovieFav, onPlay: _openMovie),
       SeriesBrowserPage(items: _series, source: _source!, favorites: _mediaFavs,
         menu: _menuButton(), watchTick: _watchTick, onFavorite: _toggleSeriesFav),
     ];
