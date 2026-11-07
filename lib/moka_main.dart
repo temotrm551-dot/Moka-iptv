@@ -3494,8 +3494,8 @@ class _HomePageState extends State<HomePage> {
     await Navigator.push(context, MaterialPageRoute(builder: (_) => AccountPage(source: s)));
   }
   Future<void> _openSettings() async {
-    await Navigator.push(context, MaterialPageRoute(builder: (_) => MokaSettingsPage(
-      source: _source, onConnect: _login, onAccount: _openAccount, onLogout: _logout)));
+    await showDialog<void>(context: context, builder: (_) => MokaSettingsPage(
+      source: _source, onConnect: _login, onAccount: _openAccount, onLogout: _logout));
     _hideAdult = await Store.adultLock();
     if (mounted) setState(() {});
   }
@@ -3720,8 +3720,9 @@ class MokaSettingsPage extends StatefulWidget {
 
 class _MokaSettingsPageState extends State<MokaSettingsPage> {
   static const _brand = Color(0xFFC8742B);
-  static const _titles = ['Accounts & source', 'Playback', 'Library & sorting',
-    'Parent Control', 'Speed test', 'VPN'];
+  static const _soft = Color(0xFFFFC27A);
+  static const _panel = Color(0xFF16110E);
+  static const _titles = ['Accounts', 'Playback', 'Library', 'Parent Control', 'Speed test', 'VPN'];
   static const _icons = <IconData>[Icons.person_rounded, Icons.play_circle_outline,
     Icons.grid_view_rounded, Icons.lock_outline, Icons.speed_rounded, Icons.vpn_key_outlined];
   int _tab = 0;
@@ -3786,85 +3787,121 @@ class _MokaSettingsPageState extends State<MokaSettingsPage> {
     }
   }
 
+  InputDecoration _deco(String label, IconData icon, {Widget? suffix}) => InputDecoration(
+    labelText: label, labelStyle: const TextStyle(fontSize: 12.5),
+    prefixIcon: Icon(icon, size: 18), suffixIcon: suffix, isDense: true,
+    filled: true, fillColor: Colors.white.withOpacity(.06),
+    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+      borderSide: const BorderSide(color: _brand, width: 1.4)));
+
   Widget _field(String label, TextEditingController c, IconData icon, {bool secret = false}) =>
-    Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: TextField(
-        controller: c, obscureText: secret && _hide,
-        decoration: InputDecoration(
-          labelText: label, prefixIcon: Icon(icon), isDense: true,
-          border: const OutlineInputBorder(),
-          suffixIcon: secret ? IconButton(
-            icon: Icon(_hide ? Icons.visibility : Icons.visibility_off),
-            onPressed: () => setState(() => _hide = !_hide)) : null)));
+    TextField(
+      controller: c, obscureText: secret && _hide,
+      style: const TextStyle(fontSize: 13),
+      decoration: _deco(label, icon, suffix: secret ? IconButton(
+        iconSize: 18, visualDensity: VisualDensity.compact,
+        icon: Icon(_hide ? Icons.visibility : Icons.visibility_off),
+        onPressed: () => setState(() => _hide = !_hide)) : null));
+
+  Widget _sectionLabel(String t) => Padding(
+    padding: const EdgeInsets.only(top: 14, bottom: 8),
+    child: Text(t, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800,
+      letterSpacing: .6, color: Colors.white54)));
 
   Widget _accounts() {
     final s = widget.source;
-    return ListView(padding: const EdgeInsets.all(16), children: [
-      if (s != null) Container(
-        decoration: _cardDeco(), padding: const EdgeInsets.all(12),
-        child: Row(children: [
-          const Icon(Icons.check_circle, color: Colors.greenAccent),
-          const SizedBox(width: 10),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(s.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-            Text('${s.type == 'xtream' ? 'Xtream' : 'M3U link'} • ${s.url}',
-              maxLines: 1, overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 12, color: Colors.white60)),
+    return ListView(padding: const EdgeInsets.fromLTRB(16, 6, 16, 16), children: [
+      if (s != null) ...[
+        _sectionLabel('CURRENT ACCOUNT'),
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(color: Colors.white.withOpacity(.05),
+            borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white10)),
+          child: Column(children: [
+            Row(children: [
+              const Icon(Icons.check_circle_rounded, size: 20, color: Colors.greenAccent),
+              const SizedBox(width: 10),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(s.name, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+                Text('${s.type == 'xtream' ? 'Xtream' : 'M3U link'} • ${s.url}',
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11, color: Colors.white54)),
+              ])),
+            ]),
+            const SizedBox(height: 6),
+            Row(children: [
+              TextButton.icon(
+                style: TextButton.styleFrom(visualDensity: VisualDensity.compact, foregroundColor: _soft),
+                onPressed: widget.onAccount,
+                icon: const Icon(Icons.account_circle_outlined, size: 17),
+                label: const Text('Details', style: TextStyle(fontSize: 12))),
+              TextButton.icon(
+                style: TextButton.styleFrom(visualDensity: VisualDensity.compact,
+                  foregroundColor: Colors.redAccent),
+                onPressed: () { Navigator.pop(context); widget.onLogout(); },
+                icon: const Icon(Icons.logout_rounded, size: 17),
+                label: const Text('Logout', style: TextStyle(fontSize: 12))),
+            ]),
           ])),
-        ])),
-      if (s != null) Padding(
-        padding: const EdgeInsets.only(top: 8, bottom: 4),
-        child: Wrap(spacing: 8, children: [
-          OutlinedButton.icon(onPressed: widget.onAccount,
-            icon: const Icon(Icons.account_circle, size: 18), label: const Text('Account details')),
-          OutlinedButton.icon(
-            onPressed: () { Navigator.pop(context); widget.onLogout(); },
-            icon: const Icon(Icons.logout, size: 18), label: const Text('Logout')),
-        ])),
-      const Padding(padding: EdgeInsets.only(top: 14, bottom: 8),
-        child: Text('Add an account', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
+      ],
+      _sectionLabel('ADD AN ACCOUNT'),
       SegmentedButton<String>(
+        style: const ButtonStyle(visualDensity: VisualDensity.compact),
+        showSelectedIcon: false,
         segments: const [
-          ButtonSegment(value: 'xtream', label: Text('Xtream')),
-          ButtonSegment(value: 'm3u', label: Text('M3U link')),
+          ButtonSegment(value: 'xtream', label: Text('Xtream', style: TextStyle(fontSize: 12.5))),
+          ButtonSegment(value: 'm3u', label: Text('M3U link', style: TextStyle(fontSize: 12.5))),
         ],
         selected: {_type}, onSelectionChanged: (v) => setState(() => _type = v.first)),
-      const SizedBox(height: 12),
-      _field('Library name / اسم المكتبة', _name, Icons.label),
-      _field(_type == 'xtream' ? 'Server (مثال: http://site.com:8080)' : 'M3U playlist URL',
-        _server, Icons.link),
+      const SizedBox(height: 10),
+      _field('Library name', _name, Icons.label_outline),
+      const SizedBox(height: 8),
+      _field(_type == 'xtream' ? 'Server  (http://site.com:8080)' : 'M3U playlist URL',
+        _server, Icons.link_rounded),
       if (_type == 'xtream') ...[
-        _field('Username / اسم المستخدم', _user, Icons.person),
-        _field('Password / كلمة السر', _pass, Icons.lock, secret: true),
+        const SizedBox(height: 8),
+        Row(children: [
+          Expanded(child: _field('Username', _user, Icons.person_outline)),
+          const SizedBox(width: 8),
+          Expanded(child: _field('Password', _pass, Icons.lock_outline, secret: true)),
+        ]),
       ],
-      const SizedBox(height: 4),
-      FilledButton.icon(
+      const SizedBox(height: 14),
+      SizedBox(height: 42, child: FilledButton.icon(
         style: FilledButton.styleFrom(backgroundColor: _brand, foregroundColor: Colors.white,
-          minimumSize: const Size(0, 46)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
         onPressed: _busy ? null : _connect,
         icon: _busy
-          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-          : const Icon(Icons.login),
-        label: Text(_busy ? 'Connecting...' : 'Connect & save')),
+          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+          : const Icon(Icons.login_rounded, size: 18),
+        label: Text(_busy ? 'Connecting...' : 'Connect & save',
+          style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)))),
     ]);
   }
 
-  Widget _parental() => ListView(padding: const EdgeInsets.all(8), children: [
+  Widget _parental() => ListView(padding: const EdgeInsets.fromLTRB(8, 6, 8, 8), children: [
     if (_pin == null)
-      ListTile(leading: const Icon(Icons.lock), title: const Text('Set parental PIN'),
-        subtitle: const Text('Hide adult channels'), onTap: _setPin)
+      ListTile(dense: true, leading: const Icon(Icons.lock_outline, size: 20),
+        title: const Text('Set parental PIN', style: TextStyle(fontSize: 13.5)),
+        subtitle: const Text('Hide adult channels', style: TextStyle(fontSize: 11.5)),
+        onTap: _setPin)
     else ...[
-      SwitchListTile(title: const Text('Hide adult channels'), value: _lock,
-        secondary: const Icon(Icons.visibility_off),
+      SwitchListTile(dense: true, title: const Text('Hide adult channels', style: TextStyle(fontSize: 13.5)),
+        value: _lock, activeColor: _brand,
+        secondary: const Icon(Icons.visibility_off_outlined, size: 20),
         onChanged: (v) async {
           if (!v && !await _verify()) return;
           await Store.saveAdultLock(v);
           await _loadPin();
         }),
-      ListTile(title: const Text('Change PIN'), leading: const Icon(Icons.pin),
+      ListTile(dense: true, leading: const Icon(Icons.pin_outlined, size: 20),
+        title: const Text('Change PIN', style: TextStyle(fontSize: 13.5)),
         onTap: () async { if (await _verify()) await _setPin(); }),
-      ListTile(title: const Text('Remove PIN'), leading: const Icon(Icons.lock_open),
+      ListTile(dense: true, leading: const Icon(Icons.lock_open_rounded, size: 20),
+        title: const Text('Remove PIN', style: TextStyle(fontSize: 13.5)),
         onTap: () async {
           if (await _verify()) {
             await Store.savePin(null);
@@ -3875,26 +3912,81 @@ class _MokaSettingsPageState extends State<MokaSettingsPage> {
     ],
   ]);
 
+  Widget _soon() => Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+    Icon(_icons[_tab], size: 34, color: Colors.white24),
+    const SizedBox(height: 8),
+    Text(_titles[_tab], style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+    const SizedBox(height: 2),
+    const Text('قريباً', style: TextStyle(fontSize: 11.5, color: Colors.white54)),
+  ]));
+
   Widget _content() {
     if (_tab == 0) return _accounts();
     if (_tab == 3) return _parental();
-    return Center(child: Text('${_titles[_tab]}\nقريباً في الخطوة الجاية',
-      textAlign: TextAlign.center, style: const TextStyle(color: Colors.white60)));
+    return _soon();
+  }
+
+  Widget _navItem(int i) {
+    final sel = _tab == i;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      child: InkWell(
+        autofocus: i == 0,
+        borderRadius: BorderRadius.circular(10),
+        onTap: () => setState(() => _tab = i),
+        child: Container(
+          height: 38, padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            color: sel ? _brand.withOpacity(.22) : null,
+            borderRadius: BorderRadius.circular(10)),
+          child: Row(children: [
+            Icon(_icons[i], size: 17, color: sel ? _soft : Colors.white54),
+            const SizedBox(width: 10),
+            Expanded(child: Text(_titles[i], maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12.5,
+                fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
+                color: sel ? Colors.white : Colors.white70))),
+          ]))));
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('IPTV settings')),
-    body: Row(children: [
-      SizedBox(width: 230, child: ListView.builder(
-        itemCount: _titles.length,
-        itemBuilder: (_, i) => ListTile(
-          autofocus: i == 0, selected: _tab == i, selectedColor: _brand,
-          selectedTileColor: _brand.withOpacity(.15),
-          leading: Icon(_icons[i]), title: Text(_titles[i]),
-          onTap: () => setState(() => _tab = i)))),
-      const VerticalDivider(width: 1),
-      Expanded(child: _content()),
-    ]),
-  );
+  Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    return Dialog(
+      backgroundColor: _panel,
+      clipBehavior: Clip.antiAlias,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20),
+        side: const BorderSide(color: Colors.white10)),
+      child: SizedBox(
+        width: math.min(700.0, size.width - 48),
+        height: size.height * .9,
+        child: Column(children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 6, 8),
+            child: Row(children: [
+              const Icon(Icons.settings_rounded, size: 19, color: _soft),
+              const SizedBox(width: 10),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('Settings', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+                Text(widget.source?.name ?? 'No account',
+                  style: const TextStyle(fontSize: 10.5, color: Colors.white54)),
+              ])),
+              IconButton(
+                iconSize: 20, visualDensity: VisualDensity.compact,
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.close_rounded)),
+            ])),
+          const Divider(height: 1, color: Colors.white10),
+          Expanded(child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            SizedBox(width: 168, child: ListView(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              children: [for (var i = 0; i < _titles.length; i++) _navItem(i)])),
+            const VerticalDivider(width: 1, color: Colors.white10),
+            Expanded(child: _content()),
+          ])),
+        ]),
+      ),
+    );
+  }
 }
