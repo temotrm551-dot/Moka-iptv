@@ -3494,7 +3494,8 @@ class _HomePageState extends State<HomePage> {
     await Navigator.push(context, MaterialPageRoute(builder: (_) => AccountPage(source: s)));
   }
   Future<void> _openSettings() async {
-    await Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsPage()));
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => MokaSettingsPage(
+      source: _source, onConnect: _login, onAccount: _openAccount, onLogout: _logout)));
     _hideAdult = await Store.adultLock();
     if (mounted) setState(() {});
   }
@@ -3691,7 +3692,9 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       body: SafeArea(bottom: false, child: Row(children: [
         _SideRail(index: _tab, onTap: (i) => setState(() => _tab = i),
-          onRefresh: _loading ? null : () => _connect(_source!), menu: _menuButton()),
+          onRefresh: _loading ? null : () => _connect(_source!),
+          menu: IconButton(tooltip: 'Settings', onPressed: _openSettings,
+            icon: const Icon(Icons.settings_rounded, size: 22, color: Colors.white60))),
         Expanded(child: Column(children: [
           if (_loading) const LinearProgressIndicator(minHeight: 2),
           if (_error != null) Padding(padding: const EdgeInsets.all(8),
@@ -3702,6 +3705,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 }
+
 // ================= MOKA SETTINGS (new) =================
 
 class MokaSettingsPage extends StatefulWidget {
