@@ -3702,3 +3702,195 @@ class _HomePageState extends State<HomePage> {
     );
   }
 }
+// ================= MOKA SETTINGS (new) =================
+
+class MokaSettingsPage extends StatefulWidget {
+  final Source? source;
+  final Future<void> Function(Source) onConnect;
+  final VoidCallback onAccount, onLogout;
+  const MokaSettingsPage({super.key, required this.source, required this.onConnect,
+    required this.onAccount, required this.onLogout});
+  @override
+  State<MokaSettingsPage> createState() => _MokaSettingsPageState();
+}
+
+class _MokaSettingsPageState extends State<MokaSettingsPage> {
+  static const _brand = Color(0xFFC8742B);
+  static const _titles = ['Accounts & source', 'Playback', 'Library & sorting',
+    'Parent Control', 'Speed test', 'VPN'];
+  static const _icons = <IconData>[Icons.person_rounded, Icons.play_circle_outline,
+    Icons.grid_view_rounded, Icons.lock_outline, Icons.speed_rounded, Icons.vpn_key_outlined];
+  int _tab = 0;
+  String _type = 'xtream';
+  final _name = TextEditingController(text: 'My Playlist');
+  final _server = TextEditingController();
+  final _user = TextEditingController();
+  final _pass = TextEditingController();
+  bool _busy = false, _hide = true;
+  String? _pin;
+  bool _lock = false;
+
+  @override
+  void initState() { super.initState(); _loadPin(); }
+  @override
+  void dispose() {
+    _name.dispose(); _server.dispose(); _user.dispose(); _pass.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadPin() async {
+    _pin = await Store.pin();
+    _lock = await Store.adultLock();
+    if (mounted) setState(() {});
+  }
+  Future<bool> _verify() async {
+    final v = await _askPin(context, 'Enter PIN');
+    if (v == _pin) return true;
+    if (v != null && mounted) _message(context, 'Wrong PIN');
+    return false;
+  }
+  Future<void> _setPin() async {
+    final a = await _askPin(context, 'New PIN (4 digits)');
+    if (a == null) return;
+    if (a.length != 4) { _message(context, 'PIN must be 4 digits'); return; }
+    if (!mounted) return;
+    final b = await _askPin(context, 'Repeat PIN');
+    if (b == null) return;
+    if (a != b) { _message(context, 'PINs do not match'); return; }
+    await Store.savePin(a);
+    await Store.saveAdultLock(true);
+    await _loadPin();
+  }
+
+  Future<void> _connect() async {
+    final server = _server.text.trim();
+    if (server.isEmpty) { _message(context, 'Enter server URL'); return; }
+    if (_type == 'xtream' && (_user.text.trim().isEmpty || _pass.text.isEmpty)) {
+      _message(context, 'Enter username and password'); return;
+    }
+    final s = Source(
+      name: _name.text.trim().isEmpty ? 'My Playlist' : _name.text.trim(),
+      type: _type, url: server, user: _user.text.trim(), pass: _pass.text);
+    setState(() => _busy = true);
+    try {
+      await widget.onConnect(s);
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) _message(context, '$e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Widget _field(String label, TextEditingController c, IconData icon, {bool secret = false}) =>
+    Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: TextField(
+        controller: c, obscureText: secret && _hide,
+        decoration: InputDecoration(
+          labelText: label, prefixIcon: Icon(icon), isDense: true,
+          border: const OutlineInputBorder(),
+          suffixIcon: secret ? IconButton(
+            icon: Icon(_hide ? Icons.visibility : Icons.visibility_off),
+            onPressed: () => setState(() => _hide = !_hide)) : null)));
+
+  Widget _accounts() {
+    final s = widget.source;
+    return ListView(padding: const EdgeInsets.all(16), children: [
+      if (s != null) Container(
+        decoration: _cardDeco(), padding: const EdgeInsets.all(12),
+        child: Row(children: [
+          const Icon(Icons.check_circle, color: Colors.greenAccent),
+          const SizedBox(width: 10),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(s.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text('${s.type == 'xtream' ? 'Xtream' : 'M3U link'} • ${s.url}',
+              maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12, color: Colors.white60)),
+          ])),
+        ])),
+      if (s != null) Padding(
+        padding: const EdgeInsets.only(top: 8, bottom: 4),
+        child: Wrap(spacing: 8, children: [
+          OutlinedButton.icon(onPressed: widget.onAccount,
+            icon: const Icon(Icons.account_circle, size: 18), label: const Text('Account details')),
+          OutlinedButton.icon(
+            onPressed: () { Navigator.pop(context); widget.onLogout(); },
+            icon: const Icon(Icons.logout, size: 18), label: const Text('Logout')),
+        ])),
+      const Padding(padding: EdgeInsets.only(top: 14, bottom: 8),
+        child: Text('Add an account', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
+      SegmentedButton<String>(
+        segments: const [
+          ButtonSegment(value: 'xtream', label: Text('Xtream')),
+          ButtonSegment(value: 'm3u', label: Text('M3U link')),
+        ],
+        selected: {_type}, onSelectionChanged: (v) => setState(() => _type = v.first)),
+      const SizedBox(height: 12),
+      _field('Library name / اسم المكتبة', _name, Icons.label),
+      _field(_type == 'xtream' ? 'Server (مثال: http://site.com:8080)' : 'M3U playlist URL',
+        _server, Icons.link),
+      if (_type == 'xtream') ...[
+        _field('Username / اسم المستخدم', _user, Icons.person),
+        _field('Password / كلمة السر', _pass, Icons.lock, secret: true),
+      ],
+      const SizedBox(height: 4),
+      FilledButton.icon(
+        style: FilledButton.styleFrom(backgroundColor: _brand, foregroundColor: Colors.white,
+          minimumSize: const Size(0, 46)),
+        onPressed: _busy ? null : _connect,
+        icon: _busy
+          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+          : const Icon(Icons.login),
+        label: Text(_busy ? 'Connecting...' : 'Connect & save')),
+    ]);
+  }
+
+  Widget _parental() => ListView(padding: const EdgeInsets.all(8), children: [
+    if (_pin == null)
+      ListTile(leading: const Icon(Icons.lock), title: const Text('Set parental PIN'),
+        subtitle: const Text('Hide adult channels'), onTap: _setPin)
+    else ...[
+      SwitchListTile(title: const Text('Hide adult channels'), value: _lock,
+        secondary: const Icon(Icons.visibility_off),
+        onChanged: (v) async {
+          if (!v && !await _verify()) return;
+          await Store.saveAdultLock(v);
+          await _loadPin();
+        }),
+      ListTile(title: const Text('Change PIN'), leading: const Icon(Icons.pin),
+        onTap: () async { if (await _verify()) await _setPin(); }),
+      ListTile(title: const Text('Remove PIN'), leading: const Icon(Icons.lock_open),
+        onTap: () async {
+          if (await _verify()) {
+            await Store.savePin(null);
+            await Store.saveAdultLock(false);
+            await _loadPin();
+          }
+        }),
+    ],
+  ]);
+
+  Widget _content() {
+    if (_tab == 0) return _accounts();
+    if (_tab == 3) return _parental();
+    return Center(child: Text('${_titles[_tab]}\nقريباً في الخطوة الجاية',
+      textAlign: TextAlign.center, style: const TextStyle(color: Colors.white60)));
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('IPTV settings')),
+    body: Row(children: [
+      SizedBox(width: 230, child: ListView.builder(
+        itemCount: _titles.length,
+        itemBuilder: (_, i) => ListTile(
+          autofocus: i == 0, selected: _tab == i, selectedColor: _brand,
+          selectedTileColor: _brand.withOpacity(.15),
+          leading: Icon(_icons[i]), title: Text(_titles[i]),
+          onTap: () => setState(() => _tab = i)))),
+      const VerticalDivider(width: 1),
+      Expanded(child: _content()),
+    ]),
+  );
+}
