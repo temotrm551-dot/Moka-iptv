@@ -753,6 +753,40 @@ class _TvTextFieldState extends State<TvTextField> {
   );
 }
 
+// ================= FOCUS HIGHLIGHT (for TV remote) =================
+
+class FocusGlow extends StatefulWidget {
+  final Widget child;
+  final double radius;
+  final bool scale;
+  const FocusGlow({super.key, required this.child, this.radius = 10, this.scale = true});
+  @override
+  State<FocusGlow> createState() => _FocusGlowState();
+}
+
+class _FocusGlowState extends State<FocusGlow> {
+  bool _f = false;
+  @override
+  Widget build(BuildContext context) => Focus(
+    canRequestFocus: false,
+    skipTraversal: true,
+    onFocusChange: (v) { if (mounted) setState(() => _f = v); },
+    child: AnimatedScale(
+      scale: (_f && widget.scale) ? 1.06 : 1.0,
+      duration: const Duration(milliseconds: 120),
+      child: Stack(fit: StackFit.passthrough, clipBehavior: Clip.none, children: [
+        widget.child,
+        Positioned.fill(child: IgnorePointer(child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(widget.radius),
+            border: Border.all(color: _f ? const Color(0xFFFFC27A) : Colors.transparent, width: 3),
+            boxShadow: _f
+              ? [BoxShadow(color: const Color(0xFFC8742B).withOpacity(.6), blurRadius: 14)]
+              : null)))),
+      ])));
+}
+
 // ================= LOGIN =================
 
 class LoginPage extends StatefulWidget {
@@ -1500,8 +1534,61 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
     return Center(child: AspectRatio(aspectRatio: ratio, child: VideoPlayer(c)));
   }
 
+  bool _seekBusy = false;
+
+  void _flashControls() {
+    if (!mounted) return;
+    setState(() => _controlsVisible = true);
+    _scheduleControlsHide();
+  }
+
+  KeyEventResult _remoteKey(FocusNode node, KeyEvent e) {
+    if (e is KeyUpEvent) return KeyEventResult.ignored;
+    final c = _c;
+    if (c == null || !c.value.isInitialized) return KeyEventResult.ignored;
+    final k = e.logicalKey;
+    // Left / Right (and rewind / fast-forward keys): jump 10 seconds
+    if (k == LogicalKeyboardKey.arrowLeft || k == LogicalKeyboardKey.arrowRight ||
+        k == LogicalKeyboardKey.mediaRewind || k == LogicalKeyboardKey.mediaFastForward) {
+      final back = k == LogicalKeyboardKey.arrowLeft || k == LogicalKeyboardKey.mediaRewind;
+      if (!_seekBusy) {
+        _seekBusy = true;
+        _seekBy(back ? -10 : 10).whenComplete(() => _seekBusy = false);
+      }
+      _flashControls();
+      return KeyEventResult.handled;
+    }
+    if (e is KeyRepeatEvent) return KeyEventResult.handled;
+    // Up / Down: only show the control bar
+    if (k == LogicalKeyboardKey.arrowUp || k == LogicalKeyboardKey.arrowDown) {
+      _flashControls();
+      return KeyEventResult.handled;
+    }
+    // OK / Play-Pause: pause or resume
+    if (k == LogicalKeyboardKey.select || k == LogicalKeyboardKey.enter ||
+        k == LogicalKeyboardKey.numpadEnter || k == LogicalKeyboardKey.space ||
+        k == LogicalKeyboardKey.mediaPlayPause ||
+        (k == LogicalKeyboardKey.mediaPlay && !c.value.isPlaying) ||
+        (k == LogicalKeyboardKey.mediaPause && c.value.isPlaying)) {
+      _togglePlayback().then((_) => _flashControls());
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.mediaTrackNext && _hasNext) {
+      _goTo(_index + 1);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.mediaTrackPrevious && _hasPrev) {
+      _goTo(_index - 1);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+    Focus(autofocus: true, onKeyEvent: _remoteKey, child: _buildPlayer(context));
+
+  Widget _buildPlayer(BuildContext context) {
     final c = _c;
     final ready = c != null && c.value.isInitialized;
     const brand = _brand;
@@ -1545,7 +1632,7 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
                         Positioned.fill(child: AnimatedOpacity(
                           opacity: _controlsVisible ? 1 : 0,
                           duration: const Duration(milliseconds: 200),
-                          child: IgnorePointer(ignoring: !_controlsVisible, child: Stack(children: [
+                          child: ExcludeFocus(child: IgnorePointer(ignoring: !_controlsVisible, child: Stack(children: [
                             // ---- top bar ----
                             Positioned(top: 0, left: 0, right: 0, child: Container(
                               decoration: BoxDecoration(gradient: LinearGradient(
@@ -1643,7 +1730,7 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
                                                 color: Colors.white, fontSize: 12)))))),
                                   ]),
                                 ]))))),
-                          ])),
+                          ]))),
                         )),
                       ]);
                     }),
@@ -1722,7 +1809,7 @@ class _BrowseLayoutState extends State<_BrowseLayout> {
                 return Column(mainAxisSize: MainAxisSize.min, children: [
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                    child: InkWell(
+                    child: FocusGlow(radius: 10, scale: false, child: InkWell(
                       borderRadius: BorderRadius.circular(10),
                       onTap: () => widget.onSelect(e.key),
                       child: Container(
@@ -1741,7 +1828,7 @@ class _BrowseLayoutState extends State<_BrowseLayout> {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(fontSize: 14, height: 1.2,
                               fontWeight: sel ? FontWeight.w700 : FontWeight.w500))),
-                        ])))),
+                        ]))))),
                   if (!sel) const Divider(height: 1, indent: 14, endIndent: 14, color: Colors.white10),
                 ]);
               }),
@@ -1808,7 +1895,7 @@ class _PosterCard extends StatelessWidget {
     required this.fav, required this.onTap, required this.onFav,
     this.fallback = Icons.movie});
   @override
-  Widget build(BuildContext context) => InkWell(
+  Widget build(BuildContext context) => FocusGlow(radius: 8, child: InkWell(
     onTap: onTap,
     onLongPress: () {
       onFav();
@@ -1835,7 +1922,7 @@ class _PosterCard extends StatelessWidget {
           decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
           child: const Icon(Icons.star, size: 13, color: Colors.amber))),
       ])),
-  );
+  ));
 }
 
 // ================= MOVIES GRID =================
@@ -2004,7 +2091,7 @@ class _ChannelCard extends StatelessWidget {
   const _ChannelCard({required this.channel, required this.fav,
     required this.onTap, required this.onFav});
   @override
-  Widget build(BuildContext context) => InkWell(
+  Widget build(BuildContext context) => FocusGlow(radius: 12, child: InkWell(
     onTap: onTap,
     onLongPress: () {
       onFav();
@@ -2033,7 +2120,7 @@ class _ChannelCard extends StatelessWidget {
         if (fav) const Positioned(top: 0, right: 0,
           child: Icon(Icons.star_rounded, size: 16, color: Colors.amber)),
       ])),
-  );
+  ));
 }
 
 class LiveBrowserPage extends StatefulWidget {
@@ -2495,7 +2582,7 @@ class _SeriesDetailsPageState extends State<SeriesDetailsPage> {
     ];
     Widget thumbFallback() => Container(color: Colors.white10,
       child: const Center(child: Icon(Icons.tv, color: Colors.white38)));
-    return InkWell(
+    return FocusGlow(radius: 12, scale: false, child: InkWell(
       onTap: () => _play(ep),
       borderRadius: BorderRadius.circular(12),
       child: Container(
@@ -2527,7 +2614,7 @@ class _SeriesDetailsPageState extends State<SeriesDetailsPage> {
           ])),
         ]),
       ),
-    );
+    ));
   }
 
   @override
@@ -2937,7 +3024,7 @@ class _SideRail extends StatelessWidget {
       border: Border(right: BorderSide(color: Colors.white10))),
     child: Column(children: [
       const SizedBox(height: 6),
-      for (var i = 0; i < _items.length; i++) InkWell(
+      for (var i = 0; i < _items.length; i++) FocusGlow(radius: 12, scale: false, child: InkWell(
         onTap: () => onTap(i),
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 5),
@@ -2957,7 +3044,7 @@ class _SideRail extends StatelessWidget {
             Text(_items[i].label, style: TextStyle(fontSize: 9.5,
               fontWeight: index == i ? FontWeight.bold : FontWeight.normal,
               color: index == i ? Colors.white : Colors.white54)),
-          ])))),
+          ]))))),
       const Spacer(),
       IconButton(tooltip: 'Refresh', onPressed: onRefresh,
         icon: const Icon(Icons.refresh_rounded, size: 22, color: Colors.white60)),
