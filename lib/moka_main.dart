@@ -732,8 +732,10 @@ class TvTextField extends StatefulWidget {
   final bool obscureText, autofocus;
   final TextInputType? keyboardType;
   final TextStyle? style;
+  final ValueChanged<String>? onChanged;
   const TvTextField({super.key, required this.controller, required this.decoration,
-    this.obscureText = false, this.autofocus = false, this.keyboardType, this.style});
+    this.obscureText = false, this.autofocus = false, this.keyboardType, this.style,
+    this.onChanged});
   @override
   State<TvTextField> createState() => _TvTextFieldState();
 }
@@ -783,8 +785,17 @@ class _TvTextFieldState extends State<TvTextField> {
     style: widget.style,
     decoration: widget.decoration,
     textInputAction: TextInputAction.next,
+    onChanged: widget.onChanged,
     onSubmitted: (_) => _node.nextFocus(),
   );
+}
+
+// ================= BACK BUTTON HELPER =================
+
+class BackHub {
+  /// Set by the search box of Movies / Series / Live while it is open.
+  /// Returns true when it handled the Back press.
+  static bool Function()? searchBack;
 }
 
 // ================= FOCUS HIGHLIGHT (for TV remote) =================
@@ -1883,7 +1894,31 @@ class _BrowseLayoutState extends State<_BrowseLayout> {
   final _scroll = ScrollController();
 
   @override
-  void dispose() { _ctl.dispose(); _scroll.dispose(); super.dispose(); }
+  void dispose() {
+    if (BackHub.searchBack == _backCb) BackHub.searchBack = null;
+    _ctl.dispose(); _scroll.dispose(); super.dispose();
+  }
+
+  late final bool Function() _backCb = _onBack;
+
+  void _openSearch() {
+    setState(() => _searching = true);
+    BackHub.searchBack = _backCb;
+  }
+
+  // Back while searching: first leave the typing box (keyboard closes and
+  // you land on the results), next Back closes the search. Never exits the app.
+  bool _onBack() {
+    if (!_searching) return false;
+    final pf = FocusManager.instance.primaryFocus;
+    final inField = pf?.context?.findAncestorWidgetOfExactType<EditableText>() != null;
+    if (inField) {
+      if (!pf!.focusInDirection(TraversalDirection.down)) pf.nextFocus();
+      return true;
+    }
+    _closeSearch();
+    return true;
+  }
 
   String get _title {
     for (final e in widget.entries) { if (e.key == widget.selected) return e.label; }
@@ -1892,6 +1927,7 @@ class _BrowseLayoutState extends State<_BrowseLayout> {
   void _closeSearch() {
     _ctl.clear();
     widget.onQuery('');
+    if (BackHub.searchBack == _backCb) BackHub.searchBack = null;
     setState(() => _searching = false);
   }
 
@@ -1956,7 +1992,7 @@ class _BrowseLayoutState extends State<_BrowseLayout> {
           decoration: _panel,
           child: Row(children: [
             Expanded(child: _searching
-              ? TextField(controller: _ctl, autofocus: true,
+              ? TvTextField(controller: _ctl, autofocus: true,
                   style: const TextStyle(fontSize: 14),
                   decoration: InputDecoration(hintText: widget.hint,
                     border: InputBorder.none, isDense: true),
@@ -1970,7 +2006,7 @@ class _BrowseLayoutState extends State<_BrowseLayout> {
                   ])),
             IconButton(
               tooltip: 'Search',
-              onPressed: _searching ? _closeSearch : () => setState(() => _searching = true),
+              onPressed: _searching ? _closeSearch : _openSearch,
               icon: Icon(_searching ? Icons.close : Icons.search)),
             PopupMenuButton<bool>(
               tooltip: 'Sort',
@@ -3934,6 +3970,13 @@ class _HomePageState extends State<HomePage> {
     ]);
   }
 
+  void _handleBack() {
+    final cb = BackHub.searchBack;
+    if (cb != null && cb()) return;
+    if (_tab != 0) { setState(() => _tab = 0); return; }
+    SystemNavigator.pop();
+  }
+
   Widget _menuButton() => PopupMenuButton<String>(
     icon: const Icon(Icons.more_vert),
     onSelected: (v) {
@@ -3964,7 +4007,9 @@ class _HomePageState extends State<HomePage> {
       () => SeriesBrowserPage(items: _series, source: _source!, favorites: _mediaFavs,
         watchTick: _watchTick, onFavorite: _toggleSeriesFav),
     ];
-    return Scaffold(
+    return PopScope(canPop: false,
+      onPopInvokedWithResult: (didPop, _) { if (!didPop) _handleBack(); },
+      child: Scaffold(
       body: SafeArea(bottom: false, child: Row(children: [
         _SideRail(index: _tab, onTap: (i) => setState(() => _tab = i),
           onRefresh: _loading ? null : () => _connect(_source!),
@@ -3979,7 +4024,7 @@ class _HomePageState extends State<HomePage> {
               _visited.contains(i) ? makers[i]() : const SizedBox.shrink()])),
         ])),
       ])),
-    );
+    ));
   }
 }
 
