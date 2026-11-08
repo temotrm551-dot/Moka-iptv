@@ -596,6 +596,40 @@ Future<MovieInfo> loadMovieInfo(Source s, String id) async {
     backdrop: backdrop, duration: str(info['duration']), rating: rating);
 }
 
+// ================= APP THEMES =================
+
+class AppThemeData {
+  final String name;
+  final Color accent, soft, bg, rail;
+  const AppThemeData(this.name, this.accent, this.soft, this.bg, this.rail);
+}
+
+class AppTheme {
+  static const presets = <AppThemeData>[
+    AppThemeData('Moka', Color(0xFFC8742B), Color(0xFFF2A65A), Color(0xFF110D0B), Color(0xFF15100D)),
+    AppThemeData('Ocean', Color(0xFF1E88E5), Color(0xFF64B5F6), Color(0xFF0A1118), Color(0xFF0E1620)),
+    AppThemeData('Emerald', Color(0xFF2E9F6B), Color(0xFF7DDBA8), Color(0xFF09120E), Color(0xFF0D1712)),
+    AppThemeData('Royal', Color(0xFF8E5BEA), Color(0xFFC3A4FF), Color(0xFF110D1A), Color(0xFF161022)),
+    AppThemeData('Rose', Color(0xFFE0457B), Color(0xFFFF9DBB), Color(0xFF180D12), Color(0xFF1D1017)),
+    AppThemeData('Amoled', Color(0xFFFFB300), Color(0xFFFFD866), Color(0xFF000000), Color(0xFF000000)),
+  ];
+  static final ValueNotifier<int> index = ValueNotifier<int>(0);
+  static AppThemeData get cur => presets[index.value.clamp(0, presets.length - 1).toInt()];
+  static Color get accent => cur.accent;
+  static Color get soft => cur.soft;
+  static Color get bg => cur.bg;
+  static Color get rail => cur.rail;
+  static Future<void> load() async {
+    final p = await SharedPreferences.getInstance();
+    index.value = p.getInt('theme_index') ?? 0;
+  }
+  static Future<void> select(int i) async {
+    index.value = i;
+    final p = await SharedPreferences.getInstance();
+    await p.setInt('theme_index', i);
+  }
+}
+
 // ================= LOCAL STORAGE =================
 
 class Store {
@@ -683,7 +717,7 @@ class Poster extends StatelessWidget {
     borderRadius: BorderRadius.circular(8),
     child: url.isEmpty
       ? Container(color: Colors.white10, child: Icon(fallback, size: 42))
-      : Image.network(url, fit: BoxFit.cover,
+      : Image.network(url, fit: BoxFit.cover, cacheWidth: 360,
           errorBuilder: (_, __, ___) => Container(color: Colors.white10, child: Icon(fallback, size: 42))),
   );
 }
@@ -782,7 +816,7 @@ class _FocusGlowState extends State<FocusGlow> {
             borderRadius: BorderRadius.circular(widget.radius),
             border: Border.all(color: _f ? Colors.white : Colors.transparent, width: 3.5),
             boxShadow: _f
-              ? [BoxShadow(color: const Color(0xFFC8742B).withOpacity(.6), blurRadius: 14)]
+              ? [BoxShadow(color: AppTheme.accent.withOpacity(.6), blurRadius: 14)]
               : null)))),
       ])));
 }
@@ -834,7 +868,7 @@ class _LoginPageState extends State<LoginPage> {
         child: Card(margin: const EdgeInsets.all(10), child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Icon(Icons.live_tv, size: 34, color: Color(0xFFC8742B)),
+            Icon(Icons.live_tv, size: 34, color: AppTheme.accent),
             const SizedBox(height: 2),
             const Text('MOKA IPTV', style: TextStyle(fontSize: 21, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
@@ -956,7 +990,7 @@ class _AccountPageState extends State<AccountPage> {
       : _info == null ? const Center(child: Text('Account details are available for Xtream subscriptions only'))
       : ListView(padding: const EdgeInsets.all(12), children: [
         const SizedBox(height: 10),
-        const Icon(Icons.account_circle, size: 76, color: Color(0xFFC8742B)),
+        Icon(Icons.account_circle, size: 76, color: AppTheme.accent),
         const SizedBox(height: 10),
         Center(child: Text(_info!.username, style: const TextStyle(fontSize: 21, fontWeight: FontWeight.bold))),
         const SizedBox(height: 18),
@@ -1121,7 +1155,7 @@ class MediaPlayerPage extends StatefulWidget {
 }
 
 class _MediaPlayerPageState extends State<MediaPlayerPage> {
-  static const _brand = Color(0xFFC8742B);
+  static Color get _brand => AppTheme.accent;
   static const _fitNames = ['Fit', 'Fill', 'Stretch', '16:9'];
   static const _panel = Color(0xFF1A1411);
 
@@ -1237,7 +1271,7 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
       _advancing = true;
       _goTo(_index + 1).whenComplete(() => _advancing = false);
     }
-    setState(() {});
+    if (_controlsVisible || _subs != null || _drag != null) setState(() {});
   }
 
   Future<void> _save() async {
@@ -1587,6 +1621,12 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
       _togglePlayback();
       return KeyEventResult.handled;
     }
+    if (k == LogicalKeyboardKey.arrowDown || k == LogicalKeyboardKey.arrowUp) {
+      n.focusInDirection(k == LogicalKeyboardKey.arrowDown
+          ? TraversalDirection.down : TraversalDirection.up);
+      _scheduleControlsHide();
+      return KeyEventResult.handled;
+    }
     return KeyEventResult.ignored;
   }
 
@@ -1659,7 +1699,7 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
   Widget _buildPlayer(BuildContext context) {
     final c = _c;
     final ready = c != null && c.value.isInitialized;
-    const brand = _brand;
+    final brand = _brand;
     return Scaffold(
       backgroundColor: Colors.black,
       body: _loading
@@ -1783,7 +1823,7 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
                                         tip: '-10s'),
                                       const SizedBox(width: 10),
                                       _glow(Container(
-                                        decoration: const BoxDecoration(color: brand, shape: BoxShape.circle),
+                                        decoration: BoxDecoration(color: brand, shape: BoxShape.circle),
                                         child: IconButton(iconSize: 44, onPressed: _togglePlayback,
                                           tooltip: playing ? 'Pause' : 'Play',
                                           icon: Icon(playing ? Icons.pause : Icons.play_arrow,
@@ -1837,7 +1877,7 @@ class _BrowseLayout extends StatefulWidget {
 }
 
 class _BrowseLayoutState extends State<_BrowseLayout> {
-  static const _brand = Color(0xFFC8742B);
+  static Color get _brand => AppTheme.accent;
   bool _searching = false;
   final _ctl = TextEditingController();
   final _scroll = ScrollController();
@@ -2183,7 +2223,7 @@ class _ChannelCard extends StatelessWidget {
         Column(children: [
           Expanded(child: Center(child: channel.logo.isEmpty
             ? const Icon(Icons.live_tv_rounded, size: 34, color: Colors.white38)
-            : Image.network(channel.logo, fit: BoxFit.contain,
+            : Image.network(channel.logo, fit: BoxFit.contain, cacheWidth: 200,
                 errorBuilder: (_, __, ___) =>
                   const Icon(Icons.live_tv_rounded, size: 34, color: Colors.white38)))),
           const SizedBox(height: 4),
@@ -2322,7 +2362,7 @@ class _ChannelPickerState extends State<_ChannelPicker> {
                     dense: true,
                     leading: SizedBox(width: 36, height: 28, child: c.logo.isEmpty
                       ? const Icon(Icons.live_tv_rounded, size: 20)
-                      : Image.network(c.logo, fit: BoxFit.contain,
+                      : Image.network(c.logo, fit: BoxFit.contain, cacheWidth: 100,
                           errorBuilder: (_, __, ___) => const Icon(Icons.live_tv_rounded, size: 20))),
                     title: Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis),
                     subtitle: c.group.isEmpty ? null
@@ -2343,7 +2383,7 @@ class MultiViewPage extends StatefulWidget {
 }
 
 class _MultiViewPageState extends State<MultiViewPage> {
-  static const _brand = Color(0xFFC8742B);
+  static Color get _brand => AppTheme.accent;
   final List<_MvSlot> _slots = List<_MvSlot>.generate(4, (_) => _MvSlot());
   int _count = 2;
   int _audio = 0;
@@ -2567,7 +2607,7 @@ class SeriesDetailsPage extends StatefulWidget {
 }
 
 class _SeriesDetailsPageState extends State<SeriesDetailsPage> {
-  static const _brand = Color(0xFFC8742B);
+  static Color get _brand => AppTheme.accent;
   SeriesDetails? _d;
   bool _loading = true;
   String? _error;
@@ -2634,10 +2674,10 @@ class _SeriesDetailsPageState extends State<SeriesDetailsPage> {
   Widget _backdrop() {
     final url = (_d?.backdrop.isNotEmpty ?? false) ? _d!.backdrop : widget.series.poster;
     return Stack(fit: StackFit.expand, children: [
-      if (url.isNotEmpty) ClipRect(child: ImageFiltered(
-        imageFilter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
-        child: Image.network(url, fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => const SizedBox.shrink()))),
+      if (url.isNotEmpty) RepaintBoundary(child: ClipRect(child: ImageFiltered(
+        imageFilter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Image.network(url, fit: BoxFit.cover, cacheWidth: 400,
+          errorBuilder: (_, __, ___) => const SizedBox.shrink())))),
       Container(decoration: BoxDecoration(gradient: LinearGradient(
         begin: Alignment.topCenter, end: Alignment.bottomCenter,
         colors: [Colors.black.withOpacity(.55), Colors.black.withOpacity(.93)]))),
@@ -2671,7 +2711,7 @@ class _SeriesDetailsPageState extends State<SeriesDetailsPage> {
             borderRadius: BorderRadius.circular(8),
             child: Stack(fit: StackFit.expand, children: [
               ep.thumb.isEmpty ? thumbFallback()
-                : Image.network(ep.thumb, fit: BoxFit.cover,
+                : Image.network(ep.thumb, fit: BoxFit.cover, cacheWidth: 300,
                     errorBuilder: (_, __, ___) => thumbFallback()),
               Container(color: Colors.black26),
               const Center(child: Icon(Icons.play_circle_fill, size: 30, color: Colors.white70)),
@@ -2742,7 +2782,7 @@ class _SeriesDetailsPageState extends State<SeriesDetailsPage> {
                   title: Text(widget.series.name),
                   content: SingleChildScrollView(child: Text(plot)),
                   actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))])),
-                child: const Padding(padding: EdgeInsets.symmetric(vertical: 3),
+                child: Padding(padding: const EdgeInsets.symmetric(vertical: 3),
                   child: Text('Read more', style: TextStyle(
                     color: _brand, fontSize: 12.5, fontWeight: FontWeight.bold)))),
             ],
@@ -2784,7 +2824,7 @@ class _SeriesDetailsPageState extends State<SeriesDetailsPage> {
     );
 
     return Scaffold(
-      backgroundColor: const Color(0xFF110D0B),
+      backgroundColor: AppTheme.bg,
       body: Stack(children: [
         Positioned.fill(child: _backdrop()),
         SafeArea(child: CustomScrollView(slivers: [
@@ -2819,18 +2859,23 @@ Future<void> main() async {
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight,
   ]);
+  await AppTheme.load();
   runApp(const MokaApp());
 }
 
 class MokaApp extends StatelessWidget {
   const MokaApp({super.key});
   @override
-  Widget build(BuildContext context) => MaterialApp(
-    title: 'MOKA IPTV', debugShowCheckedModeBanner: false,
-    theme: ThemeData(useMaterial3: true,
-      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFC8742B), brightness: Brightness.dark)),
-    home: const HomePage(),
-  );
+  Widget build(BuildContext context) => ValueListenableBuilder<int>(
+    valueListenable: AppTheme.index,
+    builder: (_, __, ___) => MaterialApp(
+      title: 'MOKA IPTV', debugShowCheckedModeBanner: false,
+      theme: ThemeData(useMaterial3: true,
+        scaffoldBackgroundColor: AppTheme.bg,
+        colorScheme: ColorScheme.fromSeed(seedColor: AppTheme.accent, brightness: Brightness.dark)
+          .copyWith(surface: AppTheme.bg)),
+      home: const HomePage(),
+    ));
 }
 
 class MovieDetailsPage extends StatefulWidget {
@@ -2847,7 +2892,7 @@ class MovieDetailsPage extends StatefulWidget {
 }
 
 class _MovieDetailsPageState extends State<MovieDetailsPage> {
-  static const _brand = Color(0xFFC8742B);
+  static Color get _brand => AppTheme.accent;
   MovieInfo? _info;
   bool _loading = true;
   int _ms = 0;
@@ -2908,13 +2953,13 @@ class _MovieDetailsPageState extends State<MovieDetailsPage> {
       if ((info?.rating ?? 0) > 0) _chip(info!.rating.toStringAsFixed(1), icon: Icons.star),
     ];
     return Scaffold(
-      backgroundColor: const Color(0xFF110D0B),
+      backgroundColor: AppTheme.bg,
       body: Stack(children: [
         Positioned.fill(child: Stack(fit: StackFit.expand, children: [
-          if (bg.isNotEmpty) ClipRect(child: ImageFiltered(
-            imageFilter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
-            child: Image.network(bg, fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => const SizedBox.shrink()))),
+          if (bg.isNotEmpty) RepaintBoundary(child: ClipRect(child: ImageFiltered(
+            imageFilter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+            child: Image.network(bg, fit: BoxFit.cover, cacheWidth: 400,
+              errorBuilder: (_, __, ___) => const SizedBox.shrink())))),
           Container(decoration: BoxDecoration(gradient: LinearGradient(
             begin: Alignment.topCenter, end: Alignment.bottomCenter,
             colors: [Colors.black.withOpacity(.55), Colors.black.withOpacity(.93)]))),
@@ -2954,7 +2999,7 @@ class _MovieDetailsPageState extends State<MovieDetailsPage> {
                     title: Text(_baseTitle(m.name)),
                     content: SingleChildScrollView(child: Text(plot)),
                     actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))])),
-                  child: const Padding(padding: EdgeInsets.symmetric(vertical: 3),
+                  child: Padding(padding: const EdgeInsets.symmetric(vertical: 3),
                     child: Text('Read more', style: TextStyle(
                       color: _brand, fontSize: 12.5, fontWeight: FontWeight.bold)))),
               ],
@@ -3085,8 +3130,8 @@ class _SideRail extends StatelessWidget {
   final Widget menu;
   const _SideRail({required this.index, required this.onTap,
     required this.onRefresh, required this.menu});
-  static const _items = <_NavItem>[
-    _NavItem(Icons.home_rounded, 'Home', _gradHome),
+  static List<_NavItem> get _items => <_NavItem>[
+    _NavItem(Icons.home_rounded, 'Home', [AppTheme.accent, AppTheme.soft]),
     _NavItem(Icons.live_tv_rounded, 'Live', _gradLive),
     _NavItem(Icons.movie_filter_rounded, 'Movies', _gradMovies),
     _NavItem(Icons.video_library_rounded, 'Series', _gradSeries),
@@ -3094,8 +3139,8 @@ class _SideRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
     width: 60,
-    decoration: const BoxDecoration(color: Color(0xFF15100D),
-      border: Border(right: BorderSide(color: Colors.white10))),
+    decoration: BoxDecoration(color: AppTheme.rail,
+      border: const Border(right: BorderSide(color: Colors.white10))),
     child: Column(children: [
       const SizedBox(height: 6),
       for (var i = 0; i < _items.length; i++) FocusGlow(radius: 12, scale: false, child: InkWell(
@@ -3189,10 +3234,10 @@ class _HeroBannerState extends State<_HeroBanner> {
       child: AnimatedSwitcher(
         duration: const Duration(milliseconds: 500),
         child: KeyedSubtree(key: ValueKey(f.favKey), child: Stack(fit: StackFit.expand, children: [
-          ClipRect(child: ImageFiltered(
-            imageFilter: ImageFilter.blur(sigmaX: 26, sigmaY: 26),
-            child: Image.network(f.poster, fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Container(color: const Color(0xFF2A1B12))))),
+          RepaintBoundary(child: ClipRect(child: ImageFiltered(
+            imageFilter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+            child: Image.network(f.poster, fit: BoxFit.cover, cacheWidth: 240,
+              errorBuilder: (_, __, ___) => Container(color: const Color(0xFF2A1B12)))))),
           Container(decoration: BoxDecoration(gradient: LinearGradient(
             begin: Alignment.centerLeft, end: Alignment.centerRight,
             colors: [Colors.black.withOpacity(.88), Colors.black.withOpacity(.45)]))),
@@ -3202,7 +3247,7 @@ class _HeroBannerState extends State<_HeroBanner> {
                 Row(children: [
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(color: const Color(0xFFC8742B),
+                    decoration: BoxDecoration(color: AppTheme.accent,
                       borderRadius: BorderRadius.circular(6)),
                     child: Text(f.kind, style: const TextStyle(
                       fontSize: 10.5, fontWeight: FontWeight.bold, letterSpacing: .6))),
@@ -3221,7 +3266,7 @@ class _HeroBannerState extends State<_HeroBanner> {
                 const SizedBox(height: 8),
                 Row(children: [
                   FocusGlow(radius: 20, scale: false, child: FilledButton.icon(
-                    style: FilledButton.styleFrom(backgroundColor: const Color(0xFFC8742B),
+                    style: FilledButton.styleFrom(backgroundColor: AppTheme.accent,
                       foregroundColor: Colors.white, minimumSize: const Size(0, 34)),
                     onPressed: () => widget.onPlay(f),
                     icon: const Icon(Icons.play_arrow_rounded), label: const Text('Play Now'))),
@@ -3247,7 +3292,7 @@ class _HeroBannerState extends State<_HeroBanner> {
               margin: const EdgeInsets.only(right: 5), height: 5,
               width: d == _i % widget.items.length ? 18 : 5,
               decoration: BoxDecoration(
-                color: d == _i % widget.items.length ? const Color(0xFFC8742B) : Colors.white38,
+                color: d == _i % widget.items.length ? AppTheme.accent : Colors.white38,
                 borderRadius: BorderRadius.circular(3))),
           ])),
         ])),
@@ -3296,7 +3341,7 @@ class _ContinueCard extends StatelessWidget {
     onTap: onTap, borderRadius: BorderRadius.circular(14),
     child: ClipRRect(borderRadius: BorderRadius.circular(14), child: Stack(fit: StackFit.expand, children: [
       poster.isEmpty ? Container(color: Colors.white10)
-        : Image.network(poster, fit: BoxFit.cover, alignment: const Alignment(0, -.5),
+        : Image.network(poster, fit: BoxFit.cover, cacheWidth: 500, alignment: const Alignment(0, -.5),
             errorBuilder: (_, __, ___) => Container(color: Colors.white10)),
       Container(decoration: BoxDecoration(gradient: LinearGradient(
         begin: Alignment.topCenter, end: Alignment.bottomCenter,
@@ -3415,7 +3460,7 @@ class _PrayerCardState extends State<_PrayerCard> {
           const Spacer(),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-            decoration: BoxDecoration(color: const Color(0xFFC8742B).withOpacity(.25),
+            decoration: BoxDecoration(color: AppTheme.accent.withOpacity(.25),
               borderRadius: BorderRadius.circular(20)),
             child: Text('in $left', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700,
               color: Color(0xFFFFC27A)))),
@@ -3472,7 +3517,7 @@ class _MatchesCardState extends State<_MatchesCard> {
   void initState() {
     super.initState();
     _load();
-    _t = Timer.periodic(const Duration(minutes: 5), (_) => _load());
+    _t = Timer.periodic(const Duration(minutes: 10), (_) => _load());
   }
   @override
   void dispose() { _t?.cancel(); super.dispose(); }
@@ -3490,7 +3535,7 @@ class _MatchesCardState extends State<_MatchesCard> {
 
   Widget _logo(String url) => SizedBox(width: 26, height: 26, child: url.isEmpty
     ? const Icon(Icons.shield_outlined, size: 24, color: Colors.white38)
-    : Image.network(url, fit: BoxFit.contain,
+    : Image.network(url, fit: BoxFit.contain, cacheWidth: 80,
         errorBuilder: (_, __, ___) => const Icon(Icons.shield_outlined, size: 24, color: Colors.white38)));
 
   Widget _tile(MatchItem x) {
@@ -3585,8 +3630,12 @@ class _HomePageState extends State<HomePage> {
   String? _error;
   int _tab = 0; // Home, Live TV, Movies, Series
 
+  final Set<int> _visited = <int>{};
+  void _themeChanged() { if (mounted) setState(() {}); }
   @override
-  void initState() { super.initState(); _init(); }
+  void initState() { super.initState(); AppTheme.index.addListener(_themeChanged); _init(); }
+  @override
+  void dispose() { AppTheme.index.removeListener(_themeChanged); super.dispose(); }
   Future<void> _init() async {
     _favs = await Store.favs(); _mediaFavs = await Store.mediaFavs();
     _hideAdult = await Store.adultLock(); _lastId = await Store.lastId();
@@ -3794,7 +3843,7 @@ class _HomePageState extends State<HomePage> {
     padding: const EdgeInsets.only(top: 12, bottom: 6),
     child: Row(children: [
       Container(width: 4, height: 18, decoration: BoxDecoration(
-        color: const Color(0xFFC8742B), borderRadius: BorderRadius.circular(2))),
+        color: AppTheme.accent, borderRadius: BorderRadius.circular(2))),
       const SizedBox(width: 8),
       Expanded(child: Text(t, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800))),
       if (trailing != null) Text(trailing, style: const TextStyle(fontSize: 12, color: Colors.white54)),
@@ -3834,8 +3883,7 @@ class _HomePageState extends State<HomePage> {
     return ListView(padding: const EdgeInsets.fromLTRB(12, 4, 12, 14), children: [
       Row(children: [
         ShaderMask(
-          shaderCallback: (r) => const LinearGradient(
-            colors: [Color(0xFFFFD29A), Color(0xFFC8742B)]).createShader(r),
+          shaderCallback: (r) => LinearGradient(colors: [AppTheme.soft, AppTheme.accent]).createShader(r),
           child: const Text('MOKA IPTV', style: TextStyle(fontSize: 19,
             fontWeight: FontWeight.w900, letterSpacing: 1.3, color: Colors.white))),
         if (_source != null) Padding(padding: const EdgeInsets.only(left: 10, top: 4),
@@ -3906,13 +3954,14 @@ class _HomePageState extends State<HomePage> {
     if (!_ready) return const Scaffold(body: Center(child: CircularProgressIndicator()));
     if (_source == null) return LoginPage(onLogin: _login);
     final visibleChannels = _hideAdult ? _channels.where((c) => !_isAdult(c)).toList() : _channels;
-    final pages = <Widget>[
-      _homeBody(),
-      LiveBrowserPage(channels: visibleChannels, favorites: _favs,
+    _visited.add(_tab);
+    final makers = <Widget Function()>[
+      () => _homeBody(),
+      () => LiveBrowserPage(channels: visibleChannels, favorites: _favs,
         onFavorite: _toggleChannelFav, onPlay: _playChannel),
-      MediaGridPage(title: 'Movies', items: _movies, favorites: _mediaFavs,
+      () => MediaGridPage(title: 'Movies', items: _movies, favorites: _mediaFavs,
         progress: _progress, onFavorite: _toggleMovieFav, onPlay: _openMovie),
-      SeriesBrowserPage(items: _series, source: _source!, favorites: _mediaFavs,
+      () => SeriesBrowserPage(items: _series, source: _source!, favorites: _mediaFavs,
         watchTick: _watchTick, onFavorite: _toggleSeriesFav),
     ];
     return Scaffold(
@@ -3925,7 +3974,9 @@ class _HomePageState extends State<HomePage> {
           if (_loading) const LinearProgressIndicator(minHeight: 2),
           if (_error != null) Padding(padding: const EdgeInsets.all(8),
             child: Text(_error!, style: const TextStyle(color: Colors.redAccent))),
-          Expanded(child: IndexedStack(index: _tab, children: pages)),
+          Expanded(child: IndexedStack(index: _tab, children: [
+            for (var i = 0; i < makers.length; i++)
+              _visited.contains(i) ? makers[i]() : const SizedBox.shrink()])),
         ])),
       ])),
     );
@@ -3945,11 +3996,11 @@ class MokaSettingsPage extends StatefulWidget {
 }
 
 class _MokaSettingsPageState extends State<MokaSettingsPage> {
-  static const _brand = Color(0xFFC8742B);
+  static Color get _brand => AppTheme.accent;
   static const _soft = Color(0xFFFFC27A);
   static const _panel = Color(0xFF16110E);
-  static const _titles = ['Accounts', 'Playback', 'Library', 'Parent Control', 'Speed test', 'VPN'];
-  static const _icons = <IconData>[Icons.person_rounded, Icons.play_circle_outline,
+  static const _titles = ['Accounts', 'Appearance', 'Playback', 'Library', 'Parent Control', 'Speed test', 'VPN'];
+  static const _icons = <IconData>[Icons.person_rounded, Icons.palette_outlined, Icons.play_circle_outline,
     Icons.grid_view_rounded, Icons.lock_outline, Icons.speed_rounded, Icons.vpn_key_outlined];
   int _tab = 0;
   String _type = 'xtream';
@@ -4021,7 +4072,7 @@ class _MokaSettingsPageState extends State<MokaSettingsPage> {
     border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
     enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
     focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
-      borderSide: const BorderSide(color: _brand, width: 1.4)));
+      borderSide: BorderSide(color: _brand, width: 1.4)));
 
   Widget _field(String label, TextEditingController c, IconData icon, {bool secret = false}) =>
     TvTextField(
@@ -4138,6 +4189,36 @@ class _MokaSettingsPageState extends State<MokaSettingsPage> {
     ],
   ]);
 
+  Widget _themeCard(int i) {
+    final t = AppTheme.presets[i];
+    final sel = AppTheme.index.value == i;
+    return FocusGlow(radius: 14, scale: false, child: InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: () { AppTheme.select(i); setState(() {}); },
+      child: Container(
+        width: 148, padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+        decoration: BoxDecoration(color: t.bg, borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: sel ? t.accent : Colors.white12, width: sel ? 2.5 : 1)),
+        child: Row(children: [
+          Container(width: 26, height: 26,
+            decoration: BoxDecoration(color: t.accent, shape: BoxShape.circle)),
+          const SizedBox(width: 10),
+          Expanded(child: Text(t.name, maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700))),
+          if (sel) Icon(Icons.check_circle, size: 18, color: t.accent),
+        ]))));
+  }
+
+  Widget _appearance() => ListView(padding: const EdgeInsets.fromLTRB(16, 6, 16, 16), children: [
+    _sectionLabel('THEME'),
+    Wrap(spacing: 10, runSpacing: 10, children: [
+      for (var i = 0; i < AppTheme.presets.length; i++) _themeCard(i),
+    ]),
+    const SizedBox(height: 12),
+    const Text('Pick a theme and the whole app changes instantly.',
+      style: TextStyle(fontSize: 11.5, color: Colors.white54)),
+  ]);
+
   Widget _soon() => Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
     Icon(_icons[_tab], size: 34, color: Colors.white24),
     const SizedBox(height: 8),
@@ -4148,7 +4229,8 @@ class _MokaSettingsPageState extends State<MokaSettingsPage> {
 
   Widget _content() {
     if (_tab == 0) return _accounts();
-    if (_tab == 3) return _parental();
+    if (_tab == 1) return _appearance();
+    if (_tab == 4) return _parental();
     return _soon();
   }
 
