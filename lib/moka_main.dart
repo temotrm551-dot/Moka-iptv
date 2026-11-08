@@ -688,6 +688,71 @@ class Poster extends StatelessWidget {
   );
 }
 
+// ================= TV-FRIENDLY TEXT FIELD =================
+// Works with a TV remote: Up/Down move between fields, OK opens the keyboard,
+// Left/Right move out of the field when the cursor is at the edge.
+
+class TvTextField extends StatefulWidget {
+  final TextEditingController controller;
+  final InputDecoration decoration;
+  final bool obscureText, autofocus;
+  final TextInputType? keyboardType;
+  final TextStyle? style;
+  const TvTextField({super.key, required this.controller, required this.decoration,
+    this.obscureText = false, this.autofocus = false, this.keyboardType, this.style});
+  @override
+  State<TvTextField> createState() => _TvTextFieldState();
+}
+
+class _TvTextFieldState extends State<TvTextField> {
+  late final FocusNode _node = FocusNode(onKeyEvent: _key);
+
+  @override
+  void dispose() { _node.dispose(); super.dispose(); }
+
+  KeyEventResult _key(FocusNode n, KeyEvent e) {
+    if (e is! KeyDownEvent) return KeyEventResult.ignored;
+    final k = e.logicalKey;
+    final sel = widget.controller.selection;
+    final pos = sel.baseOffset < 0 ? 0 : sel.baseOffset;
+    if (k == LogicalKeyboardKey.arrowDown) {
+      n.nextFocus();
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowUp) {
+      n.previousFocus();
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowLeft && pos <= 0) {
+      n.focusInDirection(TraversalDirection.left);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowRight && pos >= widget.controller.text.length) {
+      n.focusInDirection(TraversalDirection.right);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.select || k == LogicalKeyboardKey.enter ||
+        k == LogicalKeyboardKey.numpadEnter) {
+      SystemChannels.textInput.invokeMethod('TextInput.show');
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  @override
+  Widget build(BuildContext context) => TextField(
+    controller: widget.controller,
+    focusNode: _node,
+    autofocus: widget.autofocus,
+    obscureText: widget.obscureText,
+    keyboardType: widget.keyboardType,
+    style: widget.style,
+    decoration: widget.decoration,
+    textInputAction: TextInputAction.next,
+    onSubmitted: (_) => _node.nextFocus(),
+  );
+}
+
 // ================= LOGIN =================
 
 class LoginPage extends StatefulWidget {
@@ -746,15 +811,15 @@ class _LoginPageState extends State<LoginPage> {
               ],
               selected: {_type}, onSelectionChanged: (v) => setState(() => _type = v.first)),
             const SizedBox(height: 6),
-            TextField(controller: _name, decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10), labelText: 'Playlist name', prefixIcon: Icon(Icons.label))),
+            TvTextField(autofocus: true, controller: _name, decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10), labelText: 'Playlist name', prefixIcon: Icon(Icons.label))),
             const SizedBox(height: 6),
-            TextField(controller: _server, keyboardType: TextInputType.url,
+            TvTextField(controller: _server, keyboardType: TextInputType.url,
               decoration: InputDecoration(isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10), labelText: _type == 'xtream' ? 'Server URL' : 'M3U playlist URL', prefixIcon: const Icon(Icons.link))),
             if (_type == 'xtream') ...[
               const SizedBox(height: 6),
-              TextField(controller: _user, decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10), labelText: 'Username', prefixIcon: Icon(Icons.person))),
+              TvTextField(controller: _user, decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10), labelText: 'Username', prefixIcon: Icon(Icons.person))),
               const SizedBox(height: 6),
-              TextField(controller: _pass, obscureText: _hidePass,
+              TvTextField(controller: _pass, obscureText: _hidePass,
                 decoration: InputDecoration(isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10), labelText: 'Password', prefixIcon: const Icon(Icons.lock),
                   suffixIcon: IconButton(icon: Icon(_hidePass ? Icons.visibility : Icons.visibility_off),
                     onPressed: () => setState(() => _hidePass = !_hidePass)))),
@@ -3798,7 +3863,7 @@ class _MokaSettingsPageState extends State<MokaSettingsPage> {
       borderSide: const BorderSide(color: _brand, width: 1.4)));
 
   Widget _field(String label, TextEditingController c, IconData icon, {bool secret = false}) =>
-    TextField(
+    TvTextField(
       controller: c, obscureText: secret && _hide,
       style: const TextStyle(fontSize: 13),
       decoration: _deco(label, icon, suffix: secret ? IconButton(
