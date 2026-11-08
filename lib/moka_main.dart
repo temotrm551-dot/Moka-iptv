@@ -780,7 +780,7 @@ class _FocusGlowState extends State<FocusGlow> {
           duration: const Duration(milliseconds: 120),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(widget.radius),
-            border: Border.all(color: _f ? const Color(0xFFFFC27A) : Colors.transparent, width: 3),
+            border: Border.all(color: _f ? Colors.white : Colors.transparent, width: 3.5),
             boxShadow: _f
               ? [BoxShadow(color: const Color(0xFFC8742B).withOpacity(.6), blurRadius: 14)]
               : null)))),
@@ -1207,17 +1207,20 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
 
   void _scheduleControlsHide() {
     _controlsTimer?.cancel();
-    _controlsTimer = Timer(const Duration(seconds: 4), () {
+    _controlsTimer = Timer(const Duration(seconds: 6), () {
       if (!mounted) return;
       final c = _c;
-      if (c != null && c.value.isPlaying) setState(() => _controlsVisible = false);
+      if (c != null && c.value.isPlaying) {
+        setState(() => _controlsVisible = false);
+        _rootNode.requestFocus();
+      }
     });
   }
 
   void _toggleControls() {
     setState(() => _controlsVisible = !_controlsVisible);
     if (_controlsVisible) { _scheduleControlsHide(); }
-    else { _controlsTimer?.cancel(); }
+    else { _controlsTimer?.cancel(); _rootNode.requestFocus(); }
   }
 
   void _changed() {
@@ -1399,7 +1402,7 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
           ])),
       );
     }));
-    _scheduleControlsHide();
+    _afterDialog();
   }
 
   Future<void> _subtitleDialog() async {
@@ -1454,7 +1457,7 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
             },
             child: Text(busy ? 'Loading…' : 'Load')),
         ])));
-    _scheduleControlsHide();
+    _afterDialog();
   }
 
   Future<void> _episodesDialog() async {
@@ -1488,7 +1491,7 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
           ])),
       );
     });
-    _scheduleControlsHide();
+    _afterDialog();
   }
 
   @override
@@ -1496,6 +1499,9 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
     _timer?.cancel();
     _controlsTimer?.cancel();
     _save();
+    _rootNode.dispose();
+    _gearNode.dispose();
+    _barNode.dispose();
     _c?.removeListener(_changed);
     _c?.dispose();
     WakelockPlus.disable();
@@ -1513,8 +1519,8 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
   }
 
   Widget _roundBtn(IconData icon, double size, VoidCallback? onTap, {String? tip}) =>
-    IconButton(tooltip: tip, iconSize: size, onPressed: onTap,
-      icon: Icon(icon, color: onTap == null ? Colors.white24 : Colors.white));
+    FocusGlow(radius: 30, scale: false, child: IconButton(tooltip: tip, iconSize: size, onPressed: onTap,
+      icon: Icon(icon, color: onTap == null ? Colors.white24 : Colors.white)));
 
   Widget _video(VideoPlayerController c) {
     final sz = c.value.size;
@@ -1534,6 +1540,10 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
     return Center(child: AspectRatio(aspectRatio: ratio, child: VideoPlayer(c)));
   }
 
+  // ---- TV remote support ----
+  final FocusNode _rootNode = FocusNode(debugLabel: 'player-root');
+  final FocusNode _gearNode = FocusNode(debugLabel: 'player-gear');
+  late final FocusNode _barNode = FocusNode(debugLabel: 'player-bar', onKeyEvent: _barKey);
   bool _seekBusy = false;
 
   void _flashControls() {
@@ -1542,43 +1552,99 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
     _scheduleControlsHide();
   }
 
+  void _focusAfterShow(FocusNode target) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _controlsVisible) target.requestFocus();
+    });
+  }
+
+  void _afterDialog() {
+    if (!mounted) return;
+    setState(() => _controlsVisible = true);
+    _scheduleControlsHide();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _rootNode.requestFocus();
+    });
+  }
+
+  void _seekStep(bool back) {
+    if (_seekBusy) return;
+    _seekBusy = true;
+    _seekBy(back ? -10 : 10).whenComplete(() => _seekBusy = false);
+  }
+
+  // Keys while the long progress bar has focus: Left / Right jump, OK pauses.
+  KeyEventResult _barKey(FocusNode n, KeyEvent e) {
+    if (e is KeyUpEvent) return KeyEventResult.ignored;
+    final k = e.logicalKey;
+    if (k == LogicalKeyboardKey.arrowLeft || k == LogicalKeyboardKey.arrowRight) {
+      _seekStep(k == LogicalKeyboardKey.arrowLeft);
+      _scheduleControlsHide();
+      return KeyEventResult.handled;
+    }
+    if (e is KeyDownEvent && (k == LogicalKeyboardKey.select ||
+        k == LogicalKeyboardKey.enter || k == LogicalKeyboardKey.numpadEnter)) {
+      _togglePlayback();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
   KeyEventResult _remoteKey(FocusNode node, KeyEvent e) {
     if (e is KeyUpEvent) return KeyEventResult.ignored;
     final c = _c;
     if (c == null || !c.value.isInitialized) return KeyEventResult.ignored;
     final k = e.logicalKey;
-    // Left / Right (and rewind / fast-forward keys): jump 10 seconds
-    if (k == LogicalKeyboardKey.arrowLeft || k == LogicalKeyboardKey.arrowRight ||
-        k == LogicalKeyboardKey.mediaRewind || k == LogicalKeyboardKey.mediaFastForward) {
-      final back = k == LogicalKeyboardKey.arrowLeft || k == LogicalKeyboardKey.mediaRewind;
-      if (!_seekBusy) {
-        _seekBusy = true;
-        _seekBy(back ? -10 : 10).whenComplete(() => _seekBusy = false);
-      }
+    final playing = c.value.isPlaying;
+    // Media keys work from anywhere
+    if (k == LogicalKeyboardKey.mediaPlayPause ||
+        (k == LogicalKeyboardKey.mediaPlay && !playing) ||
+        (k == LogicalKeyboardKey.mediaPause && playing)) {
+      if (e is KeyDownEvent) _togglePlayback().then((_) => _flashControls());
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.mediaRewind || k == LogicalKeyboardKey.mediaFastForward) {
+      _seekStep(k == LogicalKeyboardKey.mediaRewind);
+      _flashControls();
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.mediaTrackNext && _hasNext) {
+      if (e is KeyDownEvent) _goTo(_index + 1);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.mediaTrackPrevious && _hasPrev) {
+      if (e is KeyDownEvent) _goTo(_index - 1);
+      return KeyEventResult.handled;
+    }
+    // Focus is on a button inside the control bar: normal navigation
+    if (!_rootNode.hasPrimaryFocus) {
+      _scheduleControlsHide();
+      return KeyEventResult.ignored;
+    }
+    // Nothing selected on screen:
+    // Left / Right jump 10 seconds
+    if (k == LogicalKeyboardKey.arrowLeft || k == LogicalKeyboardKey.arrowRight) {
+      _seekStep(k == LogicalKeyboardKey.arrowLeft);
       _flashControls();
       return KeyEventResult.handled;
     }
     if (e is KeyRepeatEvent) return KeyEventResult.handled;
-    // Up / Down: only show the control bar
-    if (k == LogicalKeyboardKey.arrowUp || k == LogicalKeyboardKey.arrowDown) {
+    // Up: show the bar and select the top icons (settings gear)
+    if (k == LogicalKeyboardKey.arrowUp) {
       _flashControls();
+      _focusAfterShow(_gearNode);
       return KeyEventResult.handled;
     }
-    // OK / Play-Pause: pause or resume
+    // Down: show the bar and select the long progress bar
+    if (k == LogicalKeyboardKey.arrowDown) {
+      _flashControls();
+      _focusAfterShow(_barNode);
+      return KeyEventResult.handled;
+    }
+    // OK: pause / resume
     if (k == LogicalKeyboardKey.select || k == LogicalKeyboardKey.enter ||
-        k == LogicalKeyboardKey.numpadEnter || k == LogicalKeyboardKey.space ||
-        k == LogicalKeyboardKey.mediaPlayPause ||
-        (k == LogicalKeyboardKey.mediaPlay && !c.value.isPlaying) ||
-        (k == LogicalKeyboardKey.mediaPause && c.value.isPlaying)) {
+        k == LogicalKeyboardKey.numpadEnter || k == LogicalKeyboardKey.space) {
       _togglePlayback().then((_) => _flashControls());
-      return KeyEventResult.handled;
-    }
-    if (k == LogicalKeyboardKey.mediaTrackNext && _hasNext) {
-      _goTo(_index + 1);
-      return KeyEventResult.handled;
-    }
-    if (k == LogicalKeyboardKey.mediaTrackPrevious && _hasPrev) {
-      _goTo(_index - 1);
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
@@ -1586,7 +1652,9 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
 
   @override
   Widget build(BuildContext context) =>
-    Focus(autofocus: true, onKeyEvent: _remoteKey, child: _buildPlayer(context));
+    Focus(focusNode: _rootNode, autofocus: true, onKeyEvent: _remoteKey, child: _buildPlayer(context));
+
+  Widget _glow(Widget w, {double r = 28}) => FocusGlow(radius: r, scale: false, child: w);
 
   Widget _buildPlayer(BuildContext context) {
     final c = _c;
@@ -1600,7 +1668,7 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
               ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
                   Text(_error!, style: const TextStyle(color: Colors.white)),
                   const SizedBox(height: 12),
-                  FilledButton.icon(onPressed: () => _open(_url),
+                  FilledButton.icon(autofocus: true, onPressed: () => _open(_url),
                     icon: const Icon(Icons.refresh), label: const Text('Retry')),
                 ]))
               : !ready
@@ -1624,113 +1692,119 @@ class _MediaPlayerPageState extends State<MediaPlayerPage> {
                           onTap: _toggleControls,
                           child: const SizedBox.expand())),
                         if (_subs != null) Positioned(left: 60, right: 60,
-                          bottom: _controlsVisible ? 124 : 28,
+                          bottom: _controlsVisible ? 150 : 28,
                           child: IgnorePointer(child: Center(child: ClosedCaption(
                             text: vc.value.caption.text,
-                            textStyle: const TextStyle(fontSize: 18, color: Colors.white,
+                            textStyle: const TextStyle(fontSize: 20, color: Colors.white,
                               fontWeight: FontWeight.w600))))),
                         Positioned.fill(child: AnimatedOpacity(
                           opacity: _controlsVisible ? 1 : 0,
                           duration: const Duration(milliseconds: 200),
-                          child: ExcludeFocus(child: IgnorePointer(ignoring: !_controlsVisible, child: Stack(children: [
-                            // ---- top bar ----
-                            Positioned(top: 0, left: 0, right: 0, child: Container(
-                              decoration: BoxDecoration(gradient: LinearGradient(
-                                begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                                colors: [Colors.black.withOpacity(.85), Colors.transparent])),
-                              child: SafeArea(bottom: false, child: Padding(
-                                padding: const EdgeInsets.fromLTRB(4, 2, 8, 14),
-                                child: Row(children: [
-                                  IconButton(tooltip: 'Back',
-                                    onPressed: () => Navigator.maybePop(context),
-                                    icon: const Icon(Icons.arrow_back, color: Colors.white)),
-                                  Expanded(child: Text(_name, maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(color: Colors.white,
-                                      fontSize: 17, fontWeight: FontWeight.w600))),
-                                  IconButton(tooltip: 'Mute', onPressed: _toggleMute,
-                                    icon: Icon(_muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
-                                      color: Colors.white)),
-                                  IconButton(tooltip: 'Subtitles', onPressed: _subtitleDialog,
-                                    icon: Icon(Icons.closed_caption_rounded,
-                                      color: _subs != null ? brand : Colors.white)),
-                                  IconButton(tooltip: 'Aspect ratio', onPressed: _cycleFit,
-                                    icon: const Icon(Icons.aspect_ratio_rounded, color: Colors.white)),
-                                  IconButton(tooltip: 'Settings', onPressed: _openSettings,
-                                    icon: const Icon(Icons.settings_rounded, color: Colors.white)),
-                                ]))))),
-                            // ---- bottom controls ----
-                            Positioned(bottom: 0, left: 0, right: 0, child: Container(
-                              decoration: BoxDecoration(gradient: LinearGradient(
-                                begin: Alignment.bottomCenter, end: Alignment.topCenter,
-                                colors: [Colors.black.withOpacity(.92), Colors.transparent])),
-                              child: SafeArea(top: false, child: Padding(
-                                padding: const EdgeInsets.fromLTRB(16, 22, 16, 4),
-                                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                                  Row(children: [
-                                    Text(_time(Duration(milliseconds: shown.round())),
-                                      style: const TextStyle(color: Colors.white, fontSize: 12,
-                                        fontFeatures: [FontFeature.tabularFigures()])),
-                                    Expanded(child: SliderTheme(
-                                      data: SliderTheme.of(context).copyWith(
-                                        trackHeight: 3.5,
-                                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
-                                        overlayShape: const RoundSliderOverlayShape(overlayRadius: 15),
-                                        activeTrackColor: brand,
-                                        inactiveTrackColor: Colors.white24,
-                                        secondaryActiveTrackColor: Colors.white38,
-                                        thumbColor: brand,
-                                        overlayColor: brand.withOpacity(.25)),
-                                      child: Slider(
-                                        min: 0, max: maxV, value: shown,
-                                        secondaryTrackValue: buf,
-                                        onChangeStart: (_) => _controlsTimer?.cancel(),
-                                        onChanged: total > 0 ? (v) => setState(() => _drag = v) : null,
-                                        onChangeEnd: (v) async {
-                                          await vc.seekTo(Duration(milliseconds: v.round()));
-                                          if (mounted) setState(() => _drag = null);
-                                          _scheduleControlsHide();
-                                        }))),
-                                    Text(_time(vc.value.duration),
-                                      style: const TextStyle(color: Colors.white70, fontSize: 12,
-                                        fontFeatures: [FontFeature.tabularFigures()])),
-                                  ]),
-                                  Row(children: [
-                                    Expanded(child: Align(alignment: Alignment.centerLeft,
-                                      child: widget.playlist.length > 1
-                                        ? TextButton.icon(onPressed: _episodesDialog,
-                                            icon: const Icon(Icons.format_list_bulleted_rounded, size: 20),
-                                            label: const Text('Episodes'),
-                                            style: TextButton.styleFrom(foregroundColor: Colors.white))
-                                        : const SizedBox.shrink())),
-                                    _roundBtn(Icons.skip_previous_rounded, 34,
-                                      _hasPrev ? () => _goTo(_index - 1) : null, tip: 'Previous'),
-                                    _roundBtn(Icons.replay_10, 32, () { _seekBy(-10); _scheduleControlsHide(); },
-                                      tip: '-10s'),
-                                    const SizedBox(width: 8),
-                                    Container(
-                                      decoration: const BoxDecoration(color: brand, shape: BoxShape.circle),
-                                      child: IconButton(iconSize: 36, onPressed: _togglePlayback,
-                                        tooltip: playing ? 'Pause' : 'Play',
-                                        icon: Icon(playing ? Icons.pause : Icons.play_arrow,
-                                          color: Colors.white))),
-                                    const SizedBox(width: 8),
-                                    _roundBtn(Icons.forward_10, 32, () { _seekBy(10); _scheduleControlsHide(); },
-                                      tip: '+10s'),
-                                    _roundBtn(Icons.skip_next_rounded, 34,
-                                      _hasNext ? () => _goTo(_index + 1) : null, tip: 'Next'),
-                                    Expanded(child: Align(alignment: Alignment.centerRight,
-                                      child: info.isEmpty ? const SizedBox.shrink()
-                                        : InkWell(onTap: _openSettings, borderRadius: BorderRadius.circular(20),
-                                            child: Container(
-                                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                                              decoration: BoxDecoration(color: Colors.white12,
-                                                borderRadius: BorderRadius.circular(20)),
-                                              child: Text(info, style: const TextStyle(
-                                                color: Colors.white, fontSize: 12)))))),
-                                  ]),
-                                ]))))),
-                          ]))),
+                          child: ExcludeFocus(excluding: !_controlsVisible,
+                            child: IgnorePointer(ignoring: !_controlsVisible, child: Stack(children: [
+                              // ---- top bar ----
+                              Positioned(top: 0, left: 0, right: 0, child: Container(
+                                decoration: BoxDecoration(gradient: LinearGradient(
+                                  begin: Alignment.topCenter, end: Alignment.bottomCenter,
+                                  colors: [Colors.black.withOpacity(.85), Colors.transparent])),
+                                child: SafeArea(bottom: false, child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(8, 6, 12, 18),
+                                  child: Row(children: [
+                                    _glow(IconButton(tooltip: 'Back', iconSize: 28,
+                                      onPressed: () => Navigator.maybePop(context),
+                                      icon: const Icon(Icons.arrow_back, color: Colors.white))),
+                                    const SizedBox(width: 6),
+                                    Expanded(child: Text(_name, maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(color: Colors.white,
+                                        fontSize: 19, fontWeight: FontWeight.w600))),
+                                    _glow(IconButton(tooltip: 'Mute', iconSize: 28, onPressed: _toggleMute,
+                                      icon: Icon(_muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+                                        color: Colors.white))),
+                                    _glow(IconButton(tooltip: 'Subtitles', iconSize: 28, onPressed: _subtitleDialog,
+                                      icon: Icon(Icons.closed_caption_rounded,
+                                        color: _subs != null ? brand : Colors.white))),
+                                    _glow(IconButton(tooltip: 'Aspect ratio', iconSize: 28, onPressed: _cycleFit,
+                                      icon: const Icon(Icons.aspect_ratio_rounded, color: Colors.white))),
+                                    _glow(IconButton(focusNode: _gearNode, tooltip: 'Settings', iconSize: 28,
+                                      onPressed: _openSettings,
+                                      icon: const Icon(Icons.settings_rounded, color: Colors.white))),
+                                  ]))))),
+                              // ---- bottom controls ----
+                              Positioned(bottom: 0, left: 0, right: 0, child: Container(
+                                decoration: BoxDecoration(gradient: LinearGradient(
+                                  begin: Alignment.bottomCenter, end: Alignment.topCenter,
+                                  colors: [Colors.black.withOpacity(.92), Colors.transparent])),
+                                child: SafeArea(top: false, child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(20, 26, 20, 8),
+                                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                                    Row(children: [
+                                      Text(_time(Duration(milliseconds: shown.round())),
+                                        style: const TextStyle(color: Colors.white, fontSize: 14,
+                                          fontFeatures: [FontFeature.tabularFigures()])),
+                                      const SizedBox(width: 8),
+                                      Expanded(child: _glow(SliderTheme(
+                                        data: SliderTheme.of(context).copyWith(
+                                          trackHeight: 8,
+                                          thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 11),
+                                          overlayShape: const RoundSliderOverlayShape(overlayRadius: 22),
+                                          activeTrackColor: brand,
+                                          inactiveTrackColor: Colors.white24,
+                                          secondaryActiveTrackColor: Colors.white38,
+                                          thumbColor: brand,
+                                          overlayColor: brand.withOpacity(.25)),
+                                        child: Slider(
+                                          focusNode: _barNode,
+                                          min: 0, max: maxV, value: shown,
+                                          secondaryTrackValue: buf,
+                                          onChangeStart: (_) => _controlsTimer?.cancel(),
+                                          onChanged: total > 0 ? (v) => setState(() => _drag = v) : null,
+                                          onChangeEnd: (v) async {
+                                            await vc.seekTo(Duration(milliseconds: v.round()));
+                                            if (mounted) setState(() => _drag = null);
+                                            _scheduleControlsHide();
+                                          })), r: 14)),
+                                      const SizedBox(width: 8),
+                                      Text(_time(vc.value.duration),
+                                        style: const TextStyle(color: Colors.white70, fontSize: 14,
+                                          fontFeatures: [FontFeature.tabularFigures()])),
+                                    ]),
+                                    Row(children: [
+                                      Expanded(child: Align(alignment: Alignment.centerLeft,
+                                        child: widget.playlist.length > 1
+                                          ? _glow(TextButton.icon(onPressed: _episodesDialog,
+                                              icon: const Icon(Icons.format_list_bulleted_rounded, size: 22),
+                                              label: const Text('Episodes', style: TextStyle(fontSize: 14)),
+                                              style: TextButton.styleFrom(foregroundColor: Colors.white)), r: 14)
+                                          : const SizedBox.shrink())),
+                                      _roundBtn(Icons.skip_previous_rounded, 40,
+                                        _hasPrev ? () => _goTo(_index - 1) : null, tip: 'Previous'),
+                                      _roundBtn(Icons.replay_10, 38, () { _seekBy(-10); _scheduleControlsHide(); },
+                                        tip: '-10s'),
+                                      const SizedBox(width: 10),
+                                      _glow(Container(
+                                        decoration: const BoxDecoration(color: brand, shape: BoxShape.circle),
+                                        child: IconButton(iconSize: 44, onPressed: _togglePlayback,
+                                          tooltip: playing ? 'Pause' : 'Play',
+                                          icon: Icon(playing ? Icons.pause : Icons.play_arrow,
+                                            color: Colors.white))), r: 40),
+                                      const SizedBox(width: 10),
+                                      _roundBtn(Icons.forward_10, 38, () { _seekBy(10); _scheduleControlsHide(); },
+                                        tip: '+10s'),
+                                      _roundBtn(Icons.skip_next_rounded, 40,
+                                        _hasNext ? () => _goTo(_index + 1) : null, tip: 'Next'),
+                                      Expanded(child: Align(alignment: Alignment.centerRight,
+                                        child: info.isEmpty ? const SizedBox.shrink()
+                                          : _glow(InkWell(onTap: _openSettings, borderRadius: BorderRadius.circular(20),
+                                              child: Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                                decoration: BoxDecoration(color: Colors.white12,
+                                                  borderRadius: BorderRadius.circular(20)),
+                                                child: Text(info, style: const TextStyle(
+                                                  color: Colors.white, fontSize: 14)))), r: 20))),
+                                    ]),
+                                  ]))))),
+                            ]))),
                         )),
                       ]);
                     }),
@@ -2638,8 +2712,8 @@ class _SeriesDetailsPageState extends State<SeriesDetailsPage> {
       padding: const EdgeInsets.fromLTRB(8, 0, 16, 4),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          IconButton(tooltip: 'Back', onPressed: () => Navigator.maybePop(context),
-            icon: const Icon(Icons.arrow_back)),
+          FocusGlow(radius: 24, scale: false, child: IconButton(tooltip: 'Back', onPressed: () => Navigator.maybePop(context),
+            icon: const Icon(Icons.arrow_back))),
           Expanded(child: Text(widget.series.name, maxLines: 1, overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold))),
         ]),
@@ -2674,14 +2748,14 @@ class _SeriesDetailsPageState extends State<SeriesDetailsPage> {
             ],
             const SizedBox(height: 12),
             Row(children: [
-              FilledButton.icon(
+              FocusGlow(radius: 22, scale: false, child: FilledButton.icon(
                 style: FilledButton.styleFrom(backgroundColor: _brand,
                   foregroundColor: Colors.white, minimumSize: const Size(0, 42)),
                 onPressed: t == null ? null : () => _play(t),
-                icon: const Icon(Icons.play_arrow), label: Text(playLabel)),
+                icon: const Icon(Icons.play_arrow), label: Text(playLabel))),
               if (seasons.isNotEmpty) ...[
                 const SizedBox(width: 10),
-                PopupMenuButton<int>(
+                FocusGlow(radius: 12, scale: false, child: PopupMenuButton<int>(
                   onSelected: (v) => setState(() => _season = v),
                   itemBuilder: (_) => [for (final n in seasons)
                     PopupMenuItem<int>(value: n, child: Text('Season $n'))],
@@ -2694,15 +2768,15 @@ class _SeriesDetailsPageState extends State<SeriesDetailsPage> {
                       Text('Season ${_season ?? seasons.first}'),
                       const SizedBox(width: 6),
                       const Icon(Icons.keyboard_arrow_down),
-                    ]))),
+                    ])))),
               ],
               const SizedBox(width: 10),
-              IconButton(
+              FocusGlow(radius: 24, scale: false, child: IconButton(
                 tooltip: fav ? 'Remove from favourites' : 'Add to favourites',
                 style: IconButton.styleFrom(backgroundColor: Colors.white10),
                 onPressed: () { widget.onFavorite(widget.series.id); setState(() {}); },
                 icon: Icon(fav ? Icons.favorite : Icons.favorite_border,
-                  color: fav ? Colors.redAccent : Colors.white)),
+                  color: fav ? Colors.redAccent : Colors.white))),
             ]),
           ])),
         ]),
@@ -2847,8 +2921,8 @@ class _MovieDetailsPageState extends State<MovieDetailsPage> {
         ])),
         SafeArea(child: ListView(padding: const EdgeInsets.fromLTRB(8, 0, 16, 16), children: [
           Row(children: [
-            IconButton(tooltip: 'Back', onPressed: () => Navigator.maybePop(context),
-              icon: const Icon(Icons.arrow_back)),
+            FocusGlow(radius: 24, scale: false, child: IconButton(tooltip: 'Back', onPressed: () => Navigator.maybePop(context),
+              icon: const Icon(Icons.arrow_back))),
             Expanded(child: Text(_baseTitle(m.name), maxLines: 1, overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold))),
           ]),
@@ -2886,18 +2960,18 @@ class _MovieDetailsPageState extends State<MovieDetailsPage> {
               ],
               const SizedBox(height: 14),
               Wrap(spacing: 10, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
-                FilledButton.icon(
+                FocusGlow(radius: 22, scale: false, child: FilledButton.icon(
                   style: FilledButton.styleFrom(backgroundColor: _brand,
                     foregroundColor: Colors.white, minimumSize: const Size(0, 44)),
                   onPressed: () => _play(),
                   icon: const Icon(Icons.play_arrow_rounded),
-                  label: Text(_ms > 0 ? 'Resume  ${_fmtMs(_ms)}' : 'Play')),
-                if (_ms > 0) OutlinedButton.icon(
+                  label: Text(_ms > 0 ? 'Resume  ${_fmtMs(_ms)}' : 'Play'))),
+                if (_ms > 0) FocusGlow(radius: 22, scale: false, child: OutlinedButton.icon(
                   style: OutlinedButton.styleFrom(foregroundColor: Colors.white,
                     side: const BorderSide(color: Colors.white38), minimumSize: const Size(0, 44)),
                   onPressed: () => _play(fromStart: true),
-                  icon: const Icon(Icons.replay_rounded, size: 18), label: const Text('Start over')),
-                if (widget.qualities.length > 1) PopupMenuButton<QualityOption>(
+                  icon: const Icon(Icons.replay_rounded, size: 18), label: const Text('Start over'))),
+                if (widget.qualities.length > 1) FocusGlow(radius: 12, scale: false, child: PopupMenuButton<QualityOption>(
                   onSelected: (v) => setState(() { _q = v.label; _url = v.url; }),
                   itemBuilder: (_) => [for (final x in widget.qualities)
                     PopupMenuItem<QualityOption>(value: x, child: Text(x.label))],
@@ -2911,13 +2985,13 @@ class _MovieDetailsPageState extends State<MovieDetailsPage> {
                       Text(_q),
                       const SizedBox(width: 4),
                       const Icon(Icons.keyboard_arrow_down),
-                    ]))),
-                IconButton(
+                    ])))),
+                FocusGlow(radius: 24, scale: false, child: IconButton(
                   tooltip: fav ? 'Remove from favourites' : 'Add to favourites',
                   style: IconButton.styleFrom(backgroundColor: Colors.white10),
                   onPressed: () { widget.onFavorite(m); setState(() {}); },
                   icon: Icon(fav ? Icons.favorite : Icons.favorite_border,
-                    color: fav ? Colors.redAccent : Colors.white)),
+                    color: fav ? Colors.redAccent : Colors.white))),
               ]),
             ])),
           ]),
@@ -3046,8 +3120,8 @@ class _SideRail extends StatelessWidget {
               color: index == i ? Colors.white : Colors.white54)),
           ]))))),
       const Spacer(),
-      IconButton(tooltip: 'Refresh', onPressed: onRefresh,
-        icon: const Icon(Icons.refresh_rounded, size: 22, color: Colors.white60)),
+      FocusGlow(radius: 22, scale: false, child: IconButton(tooltip: 'Refresh', onPressed: onRefresh,
+        icon: const Icon(Icons.refresh_rounded, size: 22, color: Colors.white60))),
       menu,
       const SizedBox(height: 4),
     ]));
@@ -3146,19 +3220,19 @@ class _HeroBannerState extends State<_HeroBanner> {
                 ],
                 const SizedBox(height: 8),
                 Row(children: [
-                  FilledButton.icon(
+                  FocusGlow(radius: 20, scale: false, child: FilledButton.icon(
                     style: FilledButton.styleFrom(backgroundColor: const Color(0xFFC8742B),
                       foregroundColor: Colors.white, minimumSize: const Size(0, 34)),
                     onPressed: () => widget.onPlay(f),
-                    icon: const Icon(Icons.play_arrow_rounded), label: const Text('Play Now')),
+                    icon: const Icon(Icons.play_arrow_rounded), label: const Text('Play Now'))),
                   const SizedBox(width: 10),
-                  OutlinedButton.icon(
+                  FocusGlow(radius: 20, scale: false, child: OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(foregroundColor: Colors.white,
                       side: const BorderSide(color: Colors.white38), minimumSize: const Size(0, 34)),
                     onPressed: () => widget.onFav(f),
                     icon: Icon(fav ? Icons.favorite : Icons.favorite_border, size: 18,
                       color: fav ? Colors.redAccent : Colors.white),
-                    label: const Text('My List')),
+                    label: const Text('My List'))),
                 ]),
               ])),
             const SizedBox(width: 16),
@@ -3189,7 +3263,7 @@ class _QuickTile extends StatelessWidget {
   const _QuickTile({required this.label, required this.countText, required this.icon,
     required this.colors, required this.onTap});
   @override
-  Widget build(BuildContext context) => InkWell(
+  Widget build(BuildContext context) => FocusGlow(radius: 16, scale: true, child: InkWell(
     onTap: onTap, borderRadius: BorderRadius.circular(16),
     child: Container(
       height: 56, padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -3209,7 +3283,7 @@ class _QuickTile extends StatelessWidget {
             Text(countText, style: const TextStyle(fontSize: 10.5, color: Colors.white70)),
           ])),
         const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: Colors.white70),
-      ])));
+      ]))));
 }
 
 class _ContinueCard extends StatelessWidget {
@@ -3218,7 +3292,7 @@ class _ContinueCard extends StatelessWidget {
   const _ContinueCard({required this.title, required this.subtitle,
     required this.poster, required this.onTap});
   @override
-  Widget build(BuildContext context) => SizedBox(width: 168, child: InkWell(
+  Widget build(BuildContext context) => SizedBox(width: 168, child: FocusGlow(radius: 14, scale: true, child: InkWell(
     onTap: onTap, borderRadius: BorderRadius.circular(14),
     child: ClipRRect(borderRadius: BorderRadius.circular(14), child: Stack(fit: StackFit.expand, children: [
       poster.isEmpty ? Container(color: Colors.white10)
@@ -3235,7 +3309,7 @@ class _ContinueCard extends StatelessWidget {
           Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 11, color: Colors.white70)),
         ])),
-    ]))));
+    ])))));
 }
 
 class _PrayerCard extends StatefulWidget {
@@ -3370,13 +3444,13 @@ class _PrayerCardState extends State<_PrayerCard> {
           const SizedBox(width: 6),
           const Text('Prayer times', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
           const Spacer(),
-          InkWell(onTap: _editPlace, borderRadius: BorderRadius.circular(8), child: Padding(
+          FocusGlow(radius: 8, scale: false, child: InkWell(onTap: _editPlace, borderRadius: BorderRadius.circular(8), child: Padding(
             padding: const EdgeInsets.all(2),
             child: Row(children: [
               Text(_approx ? '$_city • offline' : _city, style: const TextStyle(fontSize: 11, color: Colors.white60)),
               const SizedBox(width: 3),
               const Icon(Icons.edit_location_alt_rounded, size: 14, color: Colors.white54),
-            ]))),
+            ])))),
         ]),
         body,
       ]));
@@ -3845,8 +3919,8 @@ class _HomePageState extends State<HomePage> {
       body: SafeArea(bottom: false, child: Row(children: [
         _SideRail(index: _tab, onTap: (i) => setState(() => _tab = i),
           onRefresh: _loading ? null : () => _connect(_source!),
-          menu: IconButton(tooltip: 'Settings', onPressed: _openSettings,
-            icon: const Icon(Icons.settings_rounded, size: 22, color: Colors.white60))),
+          menu: FocusGlow(radius: 22, scale: false, child: IconButton(tooltip: 'Settings', onPressed: _openSettings,
+            icon: const Icon(Icons.settings_rounded, size: 22, color: Colors.white60)))),
         Expanded(child: Column(children: [
           if (_loading) const LinearProgressIndicator(minHeight: 2),
           if (_error != null) Padding(padding: const EdgeInsets.all(8),
