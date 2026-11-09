@@ -3,6 +3,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main, master]
+    tags: ['v*']
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -32,3 +35,13 @@ jobs:
         with:
           name: MOKA-IPTV-apk
           path: build/app/outputs/flutter-apk/app-release.apk
+      - name: Rename APK for release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: cp build/app/outputs/flutter-apk/app-release.apk MokaIPTV-${{ github.ref_name }}.apk
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Moka IPTV ${{ github.ref_name }}
+          files: MokaIPTV-${{ github.ref_name }}.apk
+          generate_release_notes: true
