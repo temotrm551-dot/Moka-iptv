@@ -26,11 +26,58 @@ jobs:
           flutter create --org com.moka --project-name moka_iptv --platforms=android,ios _shell
           cp -r _shell/android _shell/ios .
           rm -rf _shell
+      - name: Set up fixed signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/moka.jks"
+          echo "KEYSTORE_PATH=$RUNNER_TEMP/moka.jks" >> "$GITHUB_ENV"
+          keytool -list -keystore "$RUNNER_TEMP/moka.jks" -storepass "$KEYSTORE_PASSWORD" > /dev/null
+          python3 - <<'PY'
+          import os
+          p = None
+          for f in ['android/app/build.gradle.kts', 'android/app/build.gradle']:
+              if os.path.exists(f):
+                  p = f
+          s = open(p).read()
+          if p.endswith('.kts'):
+              block = '''signingConfigs {
+                  create("release") {
+                      keyAlias = "moka"
+                      keyPassword = System.getenv("KEY_PASSWORD")
+                      storeFile = file(System.getenv("KEYSTORE_PATH"))
+                      storePassword = System.getenv("KEYSTORE_PASSWORD")
+                  }
+              }
+              buildTypes {'''
+              s = s.replace('buildTypes {', block, 1)
+              s = s.replace('signingConfigs.getByName("debug")', 'signingConfigs.getByName("release")')
+              assert 'getByName("release")' in s
+          else:
+              block = '''signingConfigs {
+                  release {
+                      keyAlias 'moka'
+                      keyPassword System.getenv("KEY_PASSWORD")
+                      storeFile file(System.getenv("KEYSTORE_PATH"))
+                      storePassword System.getenv("KEYSTORE_PASSWORD")
+                  }
+              }
+              buildTypes {'''
+              s = s.replace('buildTypes {', block, 1)
+              s = s.replace('signingConfigs.debug', 'signingConfigs.release')
+              assert 'signingConfigs.release' in s
+          open(p, 'w').write(s)
+          PY
       - run: pip install pillow
       - run: python tools/setup.py
       - run: flutter pub get
       - run: dart run flutter_launcher_icons
-      - run: flutter build apk --release -t lib/moka_main.dart
+      - name: Build release APK
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: flutter build apk --release -t lib/moka_main.dart
       - uses: actions/upload-artifact@v4
         with:
           name: MOKA-IPTV-apk
