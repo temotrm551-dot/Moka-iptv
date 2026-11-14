@@ -52,11 +52,14 @@ jobs:
                       keyPassword = System.getenv("KEY_PASSWORD")
                       storeFile = file(System.getenv("KEYSTORE_PATH"))
                       storePassword = System.getenv("KEYSTORE_PASSWORD")
+                      enableV1Signing = true
+                      enableV2Signing = true
                   }
               }
               buildTypes {'''
               s = s.replace('buildTypes {', block, 1)
               s = s.replace('signingConfigs.getByName("debug")', 'signingConfigs.getByName("release")')
+              s = s.replace('minSdk = flutter.minSdkVersion', 'minSdk = 21')
               assert 'getByName("release")' in s
           else:
               block = '''lint {
@@ -69,11 +72,14 @@ jobs:
                       keyPassword System.getenv("KEY_PASSWORD")
                       storeFile file(System.getenv("KEYSTORE_PATH"))
                       storePassword System.getenv("KEYSTORE_PASSWORD")
+                      v1SigningEnabled true
+                      v2SigningEnabled true
                   }
               }
               buildTypes {'''
               s = s.replace('buildTypes {', block, 1)
               s = s.replace('signingConfigs.debug', 'signingConfigs.release')
+              s = s.replace('minSdkVersion flutter.minSdkVersion', 'minSdkVersion 21')
               assert 'signingConfigs.release' in s
           open(p, 'w').write(s)
           PY
@@ -92,11 +98,15 @@ jobs:
           path: build/app/outputs/flutter-apk/app-release.apk
       - name: Rename APK for release
         if: startsWith(github.ref, 'refs/tags/v')
-        run: cp build/app/outputs/flutter-apk/app-release.apk MokaIPTV-${{ github.ref_name }}.apk
+        run: |
+          cp build/app/outputs/flutter-apk/app-release.apk MokaIPTV-${{ github.ref_name }}.apk
+          cp build/app/outputs/flutter-apk/app-release.apk MokaIPTV.apk
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           name: Moka IPTV ${{ github.ref_name }}
-          files: MokaIPTV-${{ github.ref_name }}.apk
+          files: |
+            MokaIPTV-${{ github.ref_name }}.apk
+            MokaIPTV.apk
           generate_release_notes: true
