@@ -708,17 +708,41 @@ Future<String?> _askPin(BuildContext context, String title) {
   ));
 }
 
-class Poster extends StatelessWidget {
+class Poster extends StatefulWidget {
   final String url;
   final IconData fallback;
   const Poster(this.url, {super.key, this.fallback = Icons.movie});
   @override
+  State<Poster> createState() => _PosterState();
+}
+class _PosterState extends State<Poster> {
+  int _try = 0;
+  Timer? _retry;
+  @override
+  void didUpdateWidget(covariant Poster old) {
+    super.didUpdateWidget(old);
+    if (old.url != widget.url) { _try = 0; _retry?.cancel(); _retry = null; }
+  }
+  @override
+  void dispose() { _retry?.cancel(); super.dispose(); }
+  void _scheduleRetry() {
+    if (_try >= 3 || _retry != null) return;
+    _retry = Timer(Duration(seconds: 2 + _try * 2), () {
+      _retry = null;
+      if (mounted) setState(() => _try++);
+    });
+  }
+  Widget _ph() => Container(color: Colors.white10, child: Icon(widget.fallback, size: 42));
+  @override
   Widget build(BuildContext context) => ClipRRect(
     borderRadius: BorderRadius.circular(8),
-    child: url.isEmpty
-      ? Container(color: Colors.white10, child: Icon(fallback, size: 42))
-      : Image.network(url, fit: BoxFit.cover, cacheWidth: 360,
-          errorBuilder: (_, __, ___) => Container(color: Colors.white10, child: Icon(fallback, size: 42))),
+    child: widget.url.isEmpty
+      ? _ph()
+      : Image.network(widget.url, key: ValueKey('${widget.url}#$_try'),
+          fit: BoxFit.cover, cacheWidth: 360, gaplessPlayback: true,
+          filterQuality: FilterQuality.low,
+          loadingBuilder: (c, child, p) => p == null ? child : Container(color: Colors.white10),
+          errorBuilder: (_, __, ___) { _scheduleRetry(); return _ph(); }),
   );
 }
 
@@ -2892,6 +2916,8 @@ class _SeriesDetailsPageState extends State<SeriesDetailsPage> {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  PaintingBinding.instance.imageCache.maximumSize = 400;
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 150 << 20;
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight,
   ]);
@@ -3265,15 +3291,13 @@ class _HeroBannerState extends State<_HeroBanner> {
     if (widget.items.isEmpty) return const SizedBox.shrink();
     final f = widget.items[_i % widget.items.length];
     final fav = widget.favorites.contains(f.favKey);
-    return SizedBox(height: 176, child: ClipRRect(
-      borderRadius: BorderRadius.circular(18),
+    return SizedBox(height: 200, child: ClipRRect(
+      borderRadius: BorderRadius.circular(20),
       child: AnimatedSwitcher(
         duration: const Duration(milliseconds: 500),
         child: KeyedSubtree(key: ValueKey(f.favKey), child: Stack(fit: StackFit.expand, children: [
-          RepaintBoundary(child: ClipRect(child: ImageFiltered(
-            imageFilter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-            child: Image.network(f.poster, fit: BoxFit.cover, cacheWidth: 240,
-              errorBuilder: (_, __, ___) => Container(color: const Color(0xFF2A1B12)))))),
+          Image.network(f.poster, fit: BoxFit.cover, cacheWidth: 240, filterQuality: FilterQuality.low,
+            errorBuilder: (_, __, ___) => Container(color: const Color(0xFF2A1B12))),
           Container(decoration: BoxDecoration(gradient: LinearGradient(
             begin: Alignment.centerLeft, end: Alignment.centerRight,
             colors: [Colors.black.withOpacity(.88), Colors.black.withOpacity(.45)]))),
@@ -3317,7 +3341,7 @@ class _HeroBannerState extends State<_HeroBanner> {
                 ]),
               ])),
             const SizedBox(width: 16),
-            SizedBox(width: 94, child: Container(
+            SizedBox(width: 112, child: Container(
               decoration: BoxDecoration(borderRadius: BorderRadius.circular(10),
                 boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 14, offset: Offset(0, 6))]),
               child: AspectRatio(aspectRatio: 2 / 3, child: Poster(f.poster)))),
@@ -3377,7 +3401,7 @@ class _ContinueCard extends StatelessWidget {
     onTap: onTap, borderRadius: BorderRadius.circular(14),
     child: ClipRRect(borderRadius: BorderRadius.circular(14), child: Stack(fit: StackFit.expand, children: [
       poster.isEmpty ? Container(color: Colors.white10)
-        : Image.network(poster, fit: BoxFit.cover, cacheWidth: 500, alignment: const Alignment(0, -.5),
+        : Image.network(poster, fit: BoxFit.cover, cacheWidth: 360, alignment: const Alignment(0, -.5),
             errorBuilder: (_, __, ___) => Container(color: Colors.white10)),
       Container(decoration: BoxDecoration(gradient: LinearGradient(
         begin: Alignment.topCenter, end: Alignment.bottomCenter,
@@ -3875,22 +3899,25 @@ class _HomePageState extends State<HomePage> {
     return out;
   }
 
-  Widget _sectionTitle(String t, {String? trailing}) => Padding(
-    padding: const EdgeInsets.only(top: 12, bottom: 6),
+  Widget _sectionTitle(String t, {String? trailing, VoidCallback? onMore}) => Padding(
+    padding: const EdgeInsets.only(top: 16, bottom: 8),
     child: Row(children: [
       Container(width: 4, height: 18, decoration: BoxDecoration(
         color: AppTheme.accent, borderRadius: BorderRadius.circular(2))),
       const SizedBox(width: 8),
       Expanded(child: Text(t, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800))),
-      if (trailing != null) Text(trailing, style: const TextStyle(fontSize: 12, color: Colors.white54)),
+      if (onMore != null) InkWell(onTap: onMore, borderRadius: BorderRadius.circular(8),
+        child: Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Text('See all', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppTheme.soft))))
+      else if (trailing != null) Text(trailing, style: const TextStyle(fontSize: 12, color: Colors.white54)),
     ]));
 
   Widget _posterRow<T>(List<T> items, Widget Function(T) card) => SizedBox(
-    height: 150,
+    height: 176,
     child: ListView.separated(
-      scrollDirection: Axis.horizontal, itemCount: items.length,
-      separatorBuilder: (_, __) => const SizedBox(width: 10),
-      itemBuilder: (_, i) => SizedBox(width: 100, child: card(items[i]))));
+      scrollDirection: Axis.horizontal, itemCount: items.length, cacheExtent: 400,
+      separatorBuilder: (_, __) => const SizedBox(width: 12),
+      itemBuilder: (_, i) => SizedBox(width: 118, child: card(items[i]))));
 
   void _heroPlay(_Feat f) {
     if (f.movie != null) { _playMovie(f.movie!); }
@@ -3929,23 +3956,6 @@ class _HomePageState extends State<HomePage> {
       ]),
       const SizedBox(height: 8),
       _HeroBanner(items: _featured(), favorites: _mediaFavs, onPlay: _heroPlay, onFav: _heroFav),
-      const SizedBox(height: 10),
-      Row(children: [
-        Expanded(child: _QuickTile(label: 'Live TV', countText: '${_channels.length} channels',
-          icon: Icons.live_tv_rounded, colors: _gradLive, onTap: () => setState(() => _tab = 1))),
-        const SizedBox(width: 10),
-        Expanded(child: _QuickTile(label: 'Movies', countText: '${_movies.length} titles',
-          icon: Icons.movie_filter_rounded, colors: _gradMovies, onTap: () => setState(() => _tab = 2))),
-        const SizedBox(width: 10),
-        Expanded(child: _QuickTile(label: 'Series', countText: '${_series.length} shows',
-          icon: Icons.video_library_rounded, colors: _gradSeries, onTap: () => setState(() => _tab = 3))),
-      ]),
-      const SizedBox(height: 10),
-      const SizedBox(height: 134, child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Expanded(flex: 4, child: _PrayerCard()),
-        SizedBox(width: 12),
-        Expanded(flex: 6, child: _MatchesCard()),
-      ])),
       if (cont.isNotEmpty) ...[
         _sectionTitle('Continue Watching', trailing: '${cont.length}'),
         SizedBox(height: 96, child: ListView.separated(
@@ -3954,14 +3964,14 @@ class _HomePageState extends State<HomePage> {
           itemBuilder: (_, i) => cont[i])),
       ],
       if (latestSeries.isNotEmpty) ...[
-        _sectionTitle('Latest Series'),
+        _sectionTitle('Latest Series', onMore: () => setState(() => _tab = 3)),
         _posterRow<SeriesItem>(latestSeries, (s) => _PosterCard(
           name: s.name, poster: s.poster, fallback: Icons.tv,
           fav: _mediaFavs.contains('series_${s.id}'),
           onTap: () => _openSeries(s), onFav: () => _toggleSeriesFav(s.id))),
       ],
       if (latestMovies.isNotEmpty) ...[
-        _sectionTitle('Latest Movies'),
+        _sectionTitle('Latest Movies', onMore: () => setState(() => _tab = 2)),
         _posterRow<MediaItem>(latestMovies, (m) => _PosterCard(
           name: m.name, poster: m.poster,
           fav: _mediaFavs.contains('movie_${m.id}'),
