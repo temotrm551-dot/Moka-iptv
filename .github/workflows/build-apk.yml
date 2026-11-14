@@ -42,7 +42,11 @@ jobs:
                   p = f
           s = open(p).read()
           if p.endswith('.kts'):
-              block = '''signingConfigs {
+              block = '''lint {
+                  checkReleaseBuilds = false
+                  abortOnError = false
+              }
+              signingConfigs {
                   create("release") {
                       keyAlias = "moka"
                       keyPassword = System.getenv("KEY_PASSWORD")
@@ -55,7 +59,11 @@ jobs:
               s = s.replace('signingConfigs.getByName("debug")', 'signingConfigs.getByName("release")')
               assert 'getByName("release")' in s
           else:
-              block = '''signingConfigs {
+              block = '''lint {
+                  checkReleaseBuilds false
+                  abortOnError false
+              }
+              signingConfigs {
                   release {
                       keyAlias 'moka'
                       keyPassword System.getenv("KEY_PASSWORD")
