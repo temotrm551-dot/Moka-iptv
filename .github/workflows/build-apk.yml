@@ -110,3 +110,15 @@ jobs:
             MokaIPTV-${{ github.ref_name }}.apk
             MokaIPTV.apk
           generate_release_notes: true
+      - name: Publish APK to apk branch (direct link with file name)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          mkdir apk_branch
+          cp MokaIPTV.apk apk_branch/MokaIPTV.apk
+          cd apk_branch
+          git init -b apk
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add MokaIPTV.apk
+          git commit -m "MokaIPTV ${{ github.ref_name }}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" apk
